@@ -1,0 +1,52 @@
+# Packages a clean module zip and attaches module.json + module.zip to a GitHub
+# Release. To cut a release: bump "version" in module.json, commit, then push a
+# tag "v<version>" (e.g. v1.2.0) — this workflow creates the release and uploads
+# the assets. Foundry installs/updates via the manifest URL, which points at the
+# latest release's module.json.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Derive version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      # Rewrite the released manifest so version + URLs match this exact release:
+      # download points at this tag's asset, manifest stays on "latest" so Foundry
+      # detects future updates.
+      - name: Substitute manifest values
+        uses: microsoft/variable-substitution@v1
+        with:
+          files: module.json
+        env:
+          version: ${{ steps.version.outputs.version }}
+          url: https://github.com/${{ github.repository }}
+          manifest: https://github.com/${{ github.repository }}/releases/latest/download/module.json
+          download: https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/module.zip
+
+      # Allowlist of runtime files only — no dev files end up in the package.
+      - name: Create module zip
+        run: zip module.zip module.json main.js style.css template.html LICENSE README.md lang/en.json lang/de.json
+
+      - name: Create release and attach assets
+        uses: softprops/action-gh-release@v2
+        with:
+          body: |
+            A GM soundboard for Foundry VTT: play audio from a configurable folder (subfolders become categories), in sync to your players.
+            Central controls (pause/resume, stop, loop, volume), persistent per-sound settings, favorites, search and tagging — and you choose who hears each sound.
+            Switchable themes (neutral, arcane, WFRP) and English/German localization.
+          files: |
+            module.json
+            module.zip

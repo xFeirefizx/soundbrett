@@ -1,0 +1,1057 @@
+/* =========================================================================
+   Theming
+   -------------------------------------------------------------------------
+   Each theme class only defines a set of --sb-* tokens; the actual layout
+   rules further down read exclusively from var(--sb-…). The class sits on the
+   container (.soundbrett-container) AND on the open button (.soundboard-btn)
+   so both resolve the same variables.
+   Themes change only the look, never the behaviour.
+   ========================================================================= */
+
+/* Neutral — default: cool, restrained grays with a clear hierarchy
+   (dark header bands vs. lighter button tiles, subtle steel-blue accent). */
+.soundbrett-theme-neutral {
+    --sb-font: inherit;
+    --sb-container-bg: #1f1f1f;
+    --sb-text: #dcdcdc;
+    --sb-text-strong: #ffffff;
+    --sb-text-muted: #aab0b8;
+    --sb-border: #5a626b;
+    --sb-panel-bg: #262a30;
+    --sb-panel-bg-hover: #313740;
+    --sb-grid-bg: rgba(0, 0, 0, 0.30);
+    --sb-node-bg: rgba(74, 82, 92, 0.92);
+    --sb-node-bg-hover: #3a4049;
+    --sb-accent: #6f8db0;
+    --sb-accent-hover: #92aacb;
+    --sb-accent-soft: #a9bcd4;
+    --sb-primary: #5a6b7a;
+    --sb-primary-tint: rgba(90, 107, 122, 0.18);
+    --sb-primary-light: #cdd6df;
+    --sb-on-accent: #ffffff;
+    --sb-empty: #b06a6a;
+    --sb-shadow: rgba(150, 175, 205, 0.5);
+    --sb-btn-bg: #3a3f47;
+    --sb-active-row-bg: rgba(0, 0, 0, 0.40);
+    --sb-fav: #d9b441;
+}
+
+/* Arcane — a purple/orange look. */
+.soundbrett-theme-arcane {
+    --sb-font: inherit;
+    --sb-container-bg: #1a1a1a;
+    --sb-text: #e0e0e0;
+    --sb-text-strong: #ffffff;
+    --sb-text-muted: #cccccc;
+    --sb-border: #555555;
+    --sb-panel-bg: #2a2a2a;
+    --sb-panel-bg-hover: #3a3a3a;
+    --sb-grid-bg: rgba(0, 0, 0, 0.4);
+    --sb-node-bg: rgba(30, 30, 30, 0.8);
+    --sb-node-bg-hover: #111111;
+    --sb-accent: #ff6400;
+    --sb-accent-hover: #ff8c00;
+    --sb-accent-soft: #ff6400;
+    --sb-primary: #4b0082;
+    --sb-primary-tint: rgba(75, 0, 130, 0.15);
+    --sb-primary-light: #dfbfff;
+    --sb-on-accent: #ffffff;
+    --sb-empty: #aa0000;
+    --sb-shadow: rgba(255, 100, 0, 0.5);
+    --sb-btn-bg: #333333;
+    --sb-active-row-bg: rgba(0, 0, 0, 0.5);
+    --sb-fav: #ffc94d;
+}
+
+/* WFRP — dark ink on parchment, Caslon font, blood red as accent.
+   Reuses graphic assets from the wfrp4e system (see texture/frame rules below).
+   Only works while the wfrp4e system is active; main.js enforces that. */
+.soundbrett-theme-wfrp {
+    --sb-font: "CaslonPro", "CaslonAntique", serif;
+    --sb-container-bg: #1c140d;   /* dark frame ground BEHIND the parchment */
+    --sb-text: #2a1d10;           /* dark ink on parchment */
+    --sb-text-strong: #1a1109;
+    --sb-text-muted: #5a4632;
+    --sb-border: #7a6243;
+    --sb-panel-bg: rgba(120, 90, 50, 0.20);
+    --sb-panel-bg-hover: rgba(140, 30, 20, 0.18);
+    --sb-grid-bg: rgba(120, 90, 50, 0.10);
+    --sb-node-bg: rgba(255, 250, 235, 0.40);   /* overridden by the leather texture */
+    --sb-node-bg-hover: rgba(140, 30, 20, 0.18);
+    --sb-accent: #8a1510;
+    --sb-accent-hover: #b01c14;
+    --sb-accent-soft: #6e1410;    /* dark red: header text on parchment */
+    --sb-primary: #7a6243;
+    --sb-primary-tint: rgba(120, 90, 50, 0.12);
+    --sb-primary-light: #6e1410;  /* dark red: active title (like WFRP headings) */
+    --sb-on-accent: #f2e6cf;
+    --sb-empty: #8a1510;
+    --sb-shadow: rgba(120, 30, 20, 0.4);
+    --sb-btn-bg: rgba(255, 250, 235, 0.4);
+    --sb-active-row-bg: rgba(120, 90, 50, 0.14);
+    /* Brighter gold than the parchment headings: the favorite star sits on the
+       dark leather button, where a muted gold would disappear. */
+    --sb-fav: #e8b84b;
+}
+
+/* =========================================================================
+   Type & spacing scale — theme-INDEPENDENT tokens (unlike the --sb color
+   tokens above, these don't change per theme). Defined on the container so
+   they cascade to every .sb-* / .track-* descendant. Layout rules read only
+   var(--sb-fs-…) / var(--sb-gap-…); changing a step is a one-line edit here.
+   Two control-cluster gaps stay literal on purpose (7px tile icon cluster,
+   9px routing chip) — they're tuned to surrounding geometry, see their rules.
+   ========================================================================= */
+.soundbrett-container {
+    /* font-size steps */
+    --sb-fs-2xs: 9px;
+    --sb-fs-xs: 10px;
+    --sb-fs-sm: 11px;
+    --sb-fs-md: 12px;
+    --sb-fs-lg: 13px;
+    /* gap / spacing steps (4px rhythm) */
+    --sb-gap-xs: 4px;
+    --sb-gap-sm: 6px;
+    --sb-gap-md: 8px;
+    --sb-gap-lg: 10px;
+    --sb-gap-xl: 12px;
+}
+
+/* =========================================================================
+   Layout — reads theme tokens only (no hard-coded colors).
+   ========================================================================= */
+
+.soundboard-btn {
+    margin: 5px 0;
+    background: var(--sb-primary);
+    color: var(--sb-on-accent);
+    font-family: var(--sb-font);
+}
+
+/* Scroll container edge-to-edge + themed itself, so no light section
+   background of the system shows through on scroll either. The theme class
+   sits on the app root element #soundbrett-app for this (see activateListeners). */
+#soundbrett-app .window-content {
+    padding: 0;
+    background: var(--sb-container-bg);
+    color: var(--sb-text);
+    /* The container owns the scroll (its .sb-scroll body); keep the window from
+       adding a second scrollbar. */
+    overflow: hidden;
+}
+
+/* Window header for the NON-wfrp themes. While wfrp4e is active under Foundry's
+   dark UI theme, the system skins the .window-header of EVERY generic .application
+   (its `body.theme-dark .application:not(journal,actor,item,menu) .window-header`
+   rule) — leather strip + Caslon + cream text. That leaks onto our window even
+   under neutral/arcane. Reclaim the header with our own tokens; the #id selector
+   outweighs the system's class-only rule. (The wfrp theme keeps its own header
+   skin further down, so it's excluded here.) The color tokens live on the themed
+   #soundbrett-app root and inherit down to the header. */
+#soundbrett-app:not(.soundbrett-theme-wfrp) .window-header {
+    border-image: none;
+    background: var(--sb-container-bg);
+    font-family: var(--sb-font);
+    /* wfrp4e's dark-theme header rule bumps this to var(--font-size-18); 16px
+       matches the wfrp theme's own title size, so all themes share one title
+       size (title + its icon inherit this). */
+    font-size: 16px;
+}
+#soundbrett-app:not(.soundbrett-theme-wfrp) .window-header > * {
+    color: var(--sb-text-strong);
+}
+#soundbrett-app:not(.soundbrett-theme-wfrp) .window-header button.header-control {
+    background-image: none;
+}
+
+/* App-shell layout: a fixed header (.sb-sticky) + a single scrolling body
+   (.sb-scroll). This is more robust than position:sticky, which only sticks
+   within its parent's box and unsticks once that box scrolls past. */
+.soundbrett-container {
+    font-family: var(--sb-font);
+    /* Own background + text color -> the look is independent of the active
+       system's window (some tint app windows light + text dark). color also
+       ensures .track-name (which has no own color) stays readable. */
+    background: var(--sb-container-bg);
+    color: var(--sb-text);
+    /* Fill the window-content so the inner body (not the window) scrolls. */
+    height: 100%;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Fixed header zone (does not scroll): the active-playback panel + the
+   search/routing/folders toolbar. A flex header above the scrolling body, so it
+   stays put for the whole scroll regardless of window height. */
+.sb-sticky {
+    flex: 0 0 auto;
+    position: relative;
+    z-index: 1; /* its drop shadow draws over the scrolling body's top edge */
+    background: var(--sb-container-bg);
+    padding: 6px 6px 8px;
+    box-shadow: 0 4px 6px -3px rgba(0, 0, 0, 0.45);
+}
+
+/* The single scrolling body: the folder/category list. min-height:0 lets this
+   flex child shrink below its content height so it actually scrolls. */
+.sb-scroll {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 2px 6px 6px;
+}
+
+/* One compact top row inside the sticky zone: the search box grows; the routing
+   target chip and the folder expand/collapse toggle sit to its right. */
+.sb-topbar {
+    display: flex;
+    align-items: stretch;
+    gap: var(--sb-gap-md);
+    margin-bottom: 0;
+}
+
+.sb-search {
+    display: flex;
+    align-items: center;
+    gap: var(--sb-gap-md);
+    flex: 1;
+    min-width: 0;
+    background: var(--sb-panel-bg);
+    border: 1px solid var(--sb-border);
+    border-radius: 4px;
+    padding: 6px 10px;
+}
+
+.sb-search > i {
+    color: var(--sb-text-muted);
+    font-size: var(--sb-fs-md);
+}
+
+.sb-search-input {
+    flex: 1;
+    min-width: 0;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--sb-text);
+    font-family: var(--sb-font);
+    font-size: var(--sb-fs-md);
+}
+
+.sb-search-input::placeholder {
+    color: var(--sb-text-muted);
+    opacity: 0.8;
+}
+
+/* Board-wide routing target as a single clickable chip in the top row: speaker
+   icon + the current target. A click opens the unified routing picker. Same panel
+   look as the search box so the two read as one toolbar. */
+.sb-routing-text {
+    flex: 0 1 auto;
+    width: auto; /* opt out of Foundry's width:100% on buttons */
+    max-width: 55%;
+    display: inline-flex;
+    align-items: center;
+    /* gap lives in the AppV2 block below (9px, off-scale on purpose) — not set
+       here to avoid a duplicate that's always overridden. */
+    background: var(--sb-panel-bg);
+    color: var(--sb-accent-soft);
+    border: 1px solid var(--sb-border);
+    border-radius: 4px;
+    padding: 0 10px;
+    font-family: var(--sb-font);
+    /* md to match the search input it sits next to in the toolbar row. */
+    font-size: var(--sb-fs-md);
+    line-height: 1;
+    cursor: pointer;
+}
+
+.sb-routing-text:hover {
+    color: var(--sb-accent-hover);
+    border-color: var(--sb-accent);
+}
+
+.sb-routing-text > i {
+    flex: 0 0 auto;
+    color: var(--sb-text-muted);
+    font-size: var(--sb-fs-md);
+}
+
+.sb-routing-label,
+.sb-route-label {
+    color: var(--sb-accent-soft);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+}
+
+/* Board chip (toolbar) reads at md to match the search input; the per-sound
+   gear-panel label stays sm for its denser row. */
+.sb-routing-label {
+    font-size: var(--sb-fs-md);
+}
+
+.sb-route-label {
+    font-size: var(--sb-fs-sm);
+}
+
+/* Per-sound routing row inside the gear panel: bullhorn icon + clickable text. */
+.sb-route-row > i {
+    color: var(--sb-text-muted);
+    font-size: var(--sb-fs-sm);
+    flex: 0 0 auto;
+}
+
+/* The clickable target text in the gear panel (mirrors the board chip, inline). */
+.sb-route-text {
+    flex: 1;
+    width: auto; /* opt out of Foundry's width:100% on buttons */
+    min-width: 0;
+    text-align: left;
+    background: var(--sb-btn-bg);
+    color: var(--sb-accent-soft);
+    border: 1px solid var(--sb-border);
+    border-radius: 3px;
+    padding: 3px 8px;
+    font-family: var(--sb-font);
+    font-size: var(--sb-fs-sm);
+    line-height: 1.2;
+    cursor: pointer;
+}
+
+.sb-route-text:hover {
+    color: var(--sb-accent-hover);
+    border-color: var(--sb-accent);
+}
+
+/* Active-row target badge: shown only when a track is routed to a subset
+   (custom). Makes restricted playback unmistakable above "Active Playback". */
+.sb-track-target {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--sb-gap-xs);
+    max-width: 45%;
+    margin-right: 8px;
+    padding: 1px 7px;
+    font-size: var(--sb-fs-xs);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--sb-on-accent);
+    background: var(--sb-accent);
+    border: 1px solid var(--sb-accent-hover);
+    border-radius: 10px;
+}
+
+.sb-track-target > i {
+    font-size: var(--sb-fs-2xs);
+}
+
+/* Shown by the filter (display toggled in JS) when a query matches nothing. */
+.sb-no-results {
+    display: none;
+    text-align: center;
+    font-style: italic;
+    color: var(--sb-text-muted);
+    padding: 16px;
+}
+
+.sb-category-wrapper {
+    margin-bottom: 10px;
+    border: 1px solid var(--sb-border);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.sb-folder-header {
+    background: var(--sb-panel-bg);
+    color: var(--sb-accent-soft);
+    padding: 8px 12px;
+    font-weight: bold;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid var(--sb-border);
+    /* Colored accent stripe clearly separates folder headers from sound buttons. */
+    border-left: 3px solid var(--sb-accent);
+    user-select: none;
+}
+
+.sb-folder-header:hover {
+    background: var(--sb-panel-bg-hover);
+    color: var(--sb-accent-hover);
+}
+
+/* Right-side header controls (chevron + optional preload-all icon) kept together
+   so justify-content: space-between still pins them to the right edge. */
+.sb-folder-tools {
+    display: flex;
+    align-items: center;
+    gap: var(--sb-gap-xl);
+}
+
+/* "Preload all favorites" icon in the Favorites header. */
+.sb-preload-favs {
+    cursor: pointer;
+    opacity: 0.6;
+    font-size: var(--sb-fs-lg);
+    line-height: 1;
+}
+
+.sb-preload-favs:hover {
+    opacity: 1;
+    color: var(--sb-accent-hover);
+}
+
+.sb-grid {
+    display: grid;
+    /* Responsive: tiles reflow by available width instead of a fixed 2 columns.
+       At the 480px default this still yields 2 columns; a wider window adds more,
+       a narrow one drops to 1. auto-FILL (not auto-fit) keeps the column width
+       fixed so a lone tile doesn't balloon to the full row. */
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: var(--sb-gap-sm);
+    padding: 8px;
+    background: var(--sb-grid-bg);
+}
+
+/* Tile = grid cell: a full-width sound button with the favorite star and gear
+   icons sitting ON its right edge, plus an optional settings row below the
+   button. Transparent so the grid background shows through. */
+.sb-sound-tile {
+    min-width: 0;
+}
+
+/* =========================================================================
+   AppV2 button normalization. On AppV2 the window is .application, and Foundry's
+   core CSS (foundry2.css) gives every button display:flex + centered content +
+   height/min-height:var(--button-size). We work with that: set --button-size
+   (core then sizes AND centers the glyph) and give icon-only buttons a fixed
+   width. Scoped to #soundbrett-app. The main .sb-sound-node is a left-aligned
+   TEXT button, handled separately (block + padding-driven height).
+   ========================================================================= */
+
+/* Icon-only control buttons (active-playback row AND the gear panel's top row:
+   loop / rename / preload). Fixed box + explicit flex centering. */
+#soundbrett-app .track-controls button,
+#soundbrett-app .sb-preset-loop,
+#soundbrett-app .sb-preset-preload,
+#soundbrett-app .sb-rename {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 24px;
+    min-height: 0;
+    padding: 0;
+    gap: 0;
+    line-height: 1;
+    flex: 0 0 auto;
+}
+
+/* A FontAwesome <i> is a webfont glyph carrying its own line-height/leading, so
+   even inside a flex-centered button it sits a hair high/left. Make every control
+   glyph a block box with no leading/margin so it centers cleanly on both axes.
+   Covers the icon buttons AND the toolbar chips. */
+#soundbrett-app .track-controls button > i,
+#soundbrett-app .sb-preset-loop > i,
+#soundbrett-app .sb-preset-preload > i,
+#soundbrett-app .sb-rename > i,
+#soundbrett-app .sb-toggle-all > i,
+#soundbrett-app .sb-stop-all > i,
+#soundbrett-app .sb-routing-text > i {
+    display: block;
+    line-height: 1;
+    margin: 0;
+}
+
+/* The gear panel's clickable routing text: core centers the label; just give it
+   a normal height so it isn't stretched tall and the text reads centered. */
+#soundbrett-app .sb-route-text {
+    --button-size: 24px;
+    line-height: 1;
+}
+
+/* Routing chip + folder toggle sit in the top toolbar row next to the (taller)
+   search box. Drop core's fixed button height so .sb-topbar's align-items:stretch
+   matches them to the search box height. The routing chip's inner gap matches its
+   side padding so the icon/text/edge spacing reads balanced. */
+#soundbrett-app .sb-routing-text,
+#soundbrett-app .sb-toggle-all {
+    height: auto;
+    min-height: 0;
+}
+#soundbrett-app .sb-routing-text {
+    gap: 9px; /* off-scale on purpose: matches this chip's 10px side padding */
+}
+#soundbrett-app .sb-toggle-all {
+    width: 34px;
+    padding: 0;
+    gap: 0;
+}
+
+/* The main sound tile is a left-aligned text+icon button — keep it block,
+   left-aligned, with padding (not a core square) defining its height. */
+#soundbrett-app .sb-sound-node {
+    display: block;
+    width: 100%;
+    height: auto;
+    text-align: left;
+    line-height: normal;
+}
+
+/* Relative anchor so the action icons can be placed over the button's right side. */
+.sb-tile-head {
+    position: relative;
+}
+
+.sb-sound-node {
+    display: block;
+    width: 100%;
+    background: var(--sb-node-bg);
+    color: var(--sb-text);
+    border: 1px solid var(--sb-border);
+    /* Right padding clears just the star+gear cluster (at right:8px, gap:7px, two
+       ~12px glyphs ≈ 39px) with a small buffer, so the name uses the full width up
+       to a short gap before the star. */
+    padding: 6px 44px 6px 10px;
+    font-size: var(--sb-fs-lg);
+    text-align: left;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+    border-radius: 3px;
+}
+
+.sb-sound-node:hover {
+    background: var(--sb-node-bg-hover);
+    border-color: var(--sb-accent);
+    color: var(--sb-text-strong);
+    box-shadow: 0 0 3px var(--sb-shadow);
+}
+
+/* Favorite + gear icons overlaid on the right of the sound button. Light tint
+   (var(--sb-on-accent)) so they read on every theme's button background. */
+.sb-tile-actions {
+    position: absolute;
+    top: 0;
+    right: 8px;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    /* A compact cluster of the two icons on the right that leaves the name more
+       room. Off-scale on purpose: part of the tuned right-gutter geometry
+       (right:8px + this gap + two ~12px glyphs ≈ the 44px the sound-node
+       reserves). */
+    gap: 7px;
+    /* Sit above the button so clicks hit the icon, not the play target. */
+    z-index: 1;
+}
+
+.sb-fav-toggle,
+.sb-tile-gear {
+    color: var(--sb-on-accent);
+    opacity: 0.5;
+    font-size: var(--sb-fs-md);
+    line-height: 1;
+    cursor: pointer;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
+}
+
+.sb-fav-toggle:hover,
+.sb-tile-gear:hover {
+    opacity: 1;
+}
+
+.sb-fav-toggle.active {
+    color: var(--sb-fav, var(--sb-accent));
+    opacity: 1;
+}
+
+/* Settings panel revealed by the gear: a row of loop pre-set + default volume,
+   and a row of tags. Stacked vertically; the gear handler toggles display:flex. */
+.sb-tile-settings {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--sb-gap-sm);
+    margin-top: 4px;
+    padding: 5px 6px;
+    background: var(--sb-grid-bg);
+    border: 1px solid var(--sb-border);
+    border-radius: 3px;
+}
+
+.sb-settings-row {
+    display: flex;
+    align-items: center;
+    gap: var(--sb-gap-sm);
+}
+
+.sb-preset-loop,
+.sb-preset-preload,
+.sb-rename {
+    flex: 0 0 auto;
+    background: var(--sb-btn-bg);
+    color: var(--sb-text-muted);
+    border: 1px solid var(--sb-border);
+    border-radius: 3px;
+    font-size: var(--sb-fs-sm);
+    line-height: 1;
+    cursor: pointer;
+}
+
+.sb-preset-loop:hover,
+.sb-preset-preload:hover,
+.sb-rename:hover {
+    color: var(--sb-text-strong);
+    border-color: var(--sb-accent);
+}
+
+/* While preloading the button is disabled; keep it readable, not greyed out. */
+.sb-preset-preload:disabled {
+    cursor: default;
+    opacity: 0.85;
+}
+
+.sb-preset-loop.active {
+    background: var(--sb-accent);
+    color: var(--sb-on-accent);
+    border-color: var(--sb-accent-hover);
+}
+
+.sb-preset-volume {
+    flex: 1;
+    min-width: 0;
+    height: 15px;
+    cursor: pointer;
+}
+
+/* Tags row: existing tags as removable chips + an input to add new ones. */
+.sb-tags-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--sb-gap-xs);
+}
+
+.sb-tag-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--sb-gap-xs);
+    background: var(--sb-primary-tint);
+    color: var(--sb-text);
+    border: 1px solid var(--sb-primary);
+    border-radius: 10px;
+    padding: 1px 8px;
+    font-size: var(--sb-fs-xs);
+    line-height: 1.2;
+    white-space: nowrap;
+}
+
+.sb-tag-remove {
+    cursor: pointer;
+    opacity: 0.6;
+    font-size: var(--sb-fs-2xs);
+}
+
+.sb-tag-remove:hover {
+    opacity: 1;
+    color: var(--sb-accent-hover);
+}
+
+.sb-tag-add {
+    flex: 1;
+    min-width: 64px;
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid var(--sb-border);
+    color: var(--sb-text);
+    font-family: var(--sb-font);
+    font-size: var(--sb-fs-xs);
+    outline: none;
+}
+
+.sb-tag-add::placeholder {
+    color: var(--sb-text-muted);
+    opacity: 0.7;
+}
+
+/* Read-only tag chips shown under a tile when it matched the search via a tag.
+   Hidden by default; the filter toggles display and fills it. */
+.sb-tile-match-tags {
+    display: none;
+    flex-wrap: wrap;
+    gap: var(--sb-gap-xs);
+    margin-top: 3px;
+    padding-left: 2px;
+}
+
+.sb-tag-chip-static {
+    cursor: default;
+}
+
+.sb-empty {
+    text-align: center;
+    font-style: italic;
+    color: var(--sb-empty);
+    padding: 20px;
+}
+
+.sb-active-container {
+    background: var(--sb-primary-tint);
+    border: 1px solid var(--sb-primary);
+    padding: 8px;
+    border-radius: 4px;
+    /* Sits above the toolbar inside the fixed header zone. */
+    margin-bottom: 8px;
+}
+
+/* Cap a long active list so it scrolls within the header instead of pushing the
+   library out of view; the header chevron can still collapse it entirely. */
+.sb-active-list {
+    max-height: 220px;
+    overflow-y: auto;
+}
+
+/* Calm reveal: a short slide+fade applied (via JS) only the first time the panel
+   appears, so it eases into place instead of abruptly shoving the list down.
+   Not re-applied on later re-renders (pause/volume), so it never flickers. */
+@keyframes sb-active-in {
+    from { opacity: 0; transform: translateY(-6px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+.sb-active-enter {
+    animation: sb-active-in 160ms ease-out;
+}
+
+/* Title + Stop-all share one row; the dashed divider sits on the header so it
+   spans the full width regardless of the button. */
+.sb-active-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px dashed var(--sb-primary);
+    margin-bottom: 8px;
+    padding-bottom: 3px;
+}
+
+.sb-active-title {
+    font-size: var(--sb-fs-lg);
+    margin: 0;
+    color: var(--sb-primary-light);
+    white-space: nowrap;
+}
+
+/* Right side of the active header: collapse chevron + stop-all button. */
+.sb-active-tools {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--sb-gap-lg);
+}
+
+/* Chevron that collapses just the track list (header stays). */
+.sb-active-collapse {
+    cursor: pointer;
+    color: var(--sb-primary-light);
+    opacity: 0.75;
+    font-size: var(--sb-fs-md);
+}
+
+.sb-active-collapse:hover {
+    opacity: 1;
+}
+
+.sb-stop-all {
+    flex: 0 0 auto;
+    /* Foundry forces width:100% on content buttons — opt out so it stays compact. */
+    width: auto;
+    white-space: nowrap;
+    background: var(--sb-btn-bg);
+    color: var(--sb-text-muted);
+    border: 1px solid var(--sb-border);
+    border-radius: 3px;
+    padding: 5px 14px;
+    font-size: var(--sb-fs-sm);
+    line-height: 1;
+    cursor: pointer;
+    font-family: var(--sb-font);
+    display: inline-flex;
+    align-items: center;
+    gap: var(--sb-gap-sm);
+}
+
+.sb-stop-all:hover {
+    color: var(--sb-text-strong);
+    border-color: var(--sb-accent);
+}
+
+/* Compact expand/collapse-all folders toggle, sitting in the top toolbar row.
+   Icon-only (the action label lives in the title tooltip). */
+.sb-toggle-all {
+    flex: 0 0 auto;
+    /* Foundry forces width:100% on content buttons — opt out so it stays compact. */
+    width: auto;
+    background: var(--sb-panel-bg);
+    color: var(--sb-text-muted);
+    border: 1px solid var(--sb-border);
+    border-radius: 4px;
+    padding: 0 7px;
+    font-size: var(--sb-fs-md);
+    line-height: 1;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.sb-toggle-all:hover {
+    color: var(--sb-text-strong);
+    border-color: var(--sb-accent);
+}
+
+.sb-active-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--sb-active-row-bg);
+    padding: 5px 8px;
+    margin-bottom: 4px;
+    border-radius: 3px;
+    border-left: 3px solid var(--sb-accent);
+}
+
+.track-name {
+    flex: 1;
+    font-size: var(--sb-fs-sm);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-right: 10px;
+}
+
+.track-controls {
+    display: flex;
+    align-items: center;
+    gap: var(--sb-gap-xs);
+}
+
+.track-controls button {
+    background: var(--sb-btn-bg);
+    color: var(--sb-text-muted);
+    border: 1px solid var(--sb-border);
+    padding: 2px 6px;
+    font-size: var(--sb-fs-xs);
+    cursor: pointer;
+    line-height: 1;
+    height: 22px;
+    width: 24px;
+}
+
+.track-controls button:hover {
+    color: var(--sb-text-strong);
+    border-color: var(--sb-accent);
+}
+
+.track-controls button.track-loop.active {
+    background: var(--sb-accent);
+    color: var(--sb-on-accent);
+    border-color: var(--sb-accent-hover);
+}
+
+.track-volume-slider {
+    width: 70px;
+    height: 15px;
+    margin: 0 0 0 5px;
+    cursor: pointer;
+}
+
+/* =========================================================================
+   WFRP skin — textures, frames and button graphics from the wfrp4e system.
+   Paths only resolve while wfrp4e is active; fallback colors cover the rest.
+   ========================================================================= */
+
+/* Dark frame ground BEHIND the parchment (like the dark area around the
+   parchment content surface in WFRP journals). A little padding -> the dark
+   frame becomes visible around the parchment panels. */
+.soundbrett-container.soundbrett-theme-wfrp,
+#soundbrett-app.soundbrett-theme-wfrp .window-content {
+    background-color: #1c140d;
+    background-image: url("/systems/wfrp4e/ui/backgrounds/bookshelf-texture.webp");
+    background-repeat: repeat;
+}
+.soundbrett-container.soundbrett-theme-wfrp {
+    padding: 10px;
+}
+
+/* Caslon is a serif: its fine serifs/high contrast read smaller than a sans at
+   the same px, so bump ONLY the small type steps +1px in WFRP. md/lg stay put —
+   lg is the sound-button label (nowrap + ellipsis behind a tuned 44px gutter), so
+   enlarging it would just truncate longer names earlier. Compound selector so it
+   outweighs the base scale on .soundbrett-container (same element, equal class
+   count would otherwise let source order decide). */
+.soundbrett-container.soundbrett-theme-wfrp {
+    --sb-fs-2xs: 10px;
+    --sb-fs-xs: 11px;
+    --sb-fs-sm: 12px;
+}
+
+/* Window chrome: frame the whole app like a native WFRP widget, using wfrp4e's
+   own assets — the dialog-border rail around the window on the dark ornamental
+   background, plus the app-header strip behind the title bar.
+   NOTE: dialog-border.webp is a thin 4x49 ornamental RAIL (not a square frame
+   with corner bosses), so we frame at 8px with the same slice the inner panels
+   use, for a crisp result that reads consistently with them. The theme class
+   sits on the app root (#soundbrett-app), so these target the window element
+   itself. */
+#soundbrett-app.soundbrett-theme-wfrp {
+    background: url("/systems/wfrp4e/ui/backgrounds/background.webp") repeat;
+    background-color: #15100a; /* fallback ground if the asset is missing */
+    border: 8px solid transparent;
+    border-image: url("/systems/wfrp4e/ui/borders/dialog-border.webp") 8 repeat;
+    border-radius: 0;
+    box-shadow: 0 0 18px #000;
+    padding: 0;
+}
+
+/* Title bar: the WFRP app-header strip with Caslon, cream lettering — matching
+   the generic WFRP application header. background:none lets the strip show. */
+#soundbrett-app.soundbrett-theme-wfrp .window-header {
+    border: 0 solid transparent;
+    border-image: url("/systems/wfrp4e/ui/borders/app-header.webp") 5 repeat;
+    border-image-slice: 19 21 19 21 fill;
+    border-image-width: 19px 21px 21px 21px;
+    border-image-outset: 0;
+    background: none;
+    font-family: CaslonAntique, var(--sb-font);
+}
+
+/* Title + header buttons (close/etc.) in cream with a dark shadow so they read
+   on the leather strip. Covers both AppV1 (a.header-button) and any V2 control. */
+#soundbrett-app.soundbrett-theme-wfrp .window-title {
+    color: var(--sb-on-accent);
+    text-shadow: 1px 1px 2px #000;
+    font-size: 16px;
+    font-family: CaslonAntique, var(--sb-font);
+}
+#soundbrett-app.soundbrett-theme-wfrp .window-header a.header-button,
+#soundbrett-app.soundbrett-theme-wfrp .window-header .header-control {
+    color: var(--sb-on-accent);
+    text-shadow: 1px 1px 2px #000;
+}
+#soundbrett-app.soundbrett-theme-wfrp .window-header a.header-button:hover,
+#soundbrett-app.soundbrett-theme-wfrp .window-header .header-control:hover {
+    color: #fff;
+    text-shadow: 0 0 6px rgba(255, 200, 120, 0.9);
+}
+
+/* Content panels as parchment with an ornamental WFRP dialog frame. The search
+   bar is included so its dark-ink text reads on parchment instead of dark-on-dark
+   over the bookshelf ground. */
+.soundbrett-theme-wfrp .sb-category-wrapper,
+.soundbrett-theme-wfrp .sb-active-container,
+.soundbrett-theme-wfrp .sb-search {
+    border-style: solid;
+    /* A 4px ornamental rail around the inner panels — light enough to sit under
+       the heavier window frame without competing with it. */
+    border-width: 4px;
+    border-image: url("/systems/wfrp4e/ui/borders/dialog-border.webp") 8 repeat;
+    border-radius: 0;
+    background-color: #e8dcc0;
+    background-image: url("/systems/wfrp4e/ui/backgrounds/parchment-texture.webp");
+    background-repeat: repeat;
+}
+
+/* Sound buttons in the native WFRP button style: tiled leather texture,
+   footer-button frame, light text with shadow. */
+.soundbrett-theme-wfrp .sb-sound-node {
+    background: url("/systems/wfrp4e/ui/buttons/button-wide-red.webp") repeat;
+    border: 1px solid black;
+    border-image: url("/systems/wfrp4e/ui/borders/footer-button.webp") 10 repeat;
+    border-image-width: 4px;
+    border-radius: 0;
+    color: var(--sb-on-accent);
+    text-shadow: 1px 1px 2px #000;
+    font-weight: bold;
+    /* Same right gutter as the base rule (44px) so the name uses the full width;
+       bold Caslon is a bit wider, but ellipsis still clears the star+gear cluster. */
+    padding: 8px 44px 8px 10px;
+    line-height: normal;
+}
+
+/* Hover like WFRP's active controls: warm inset glow, texture stays. */
+.soundbrett-theme-wfrp .sb-sound-node:hover {
+    background: url("/systems/wfrp4e/ui/buttons/button-wide-red.webp") repeat;
+    box-shadow: inset 0 0 8px rgba(255, 200, 120, 0.7);
+    color: var(--sb-on-accent);
+    border-color: black;
+}
+
+/* On the dark leather button the cream icons need more presence than on the
+   neutral/arcane tiles — bump the resting opacity and deepen the shadow, while
+   staying unobtrusive until hover. */
+.soundbrett-theme-wfrp .sb-fav-toggle,
+.soundbrett-theme-wfrp .sb-tile-gear {
+    opacity: 0.72;
+    text-shadow: 0 1px 2px #000, 0 0 4px #000;
+}
+
+.soundbrett-theme-wfrp .sb-fav-toggle:hover,
+.soundbrett-theme-wfrp .sb-tile-gear:hover {
+    opacity: 1;
+}
+
+/* Toolbar / stop-all buttons in the native WFRP leather style. They sit on the
+   dark bookshelf ground (toolbar) AND on parchment (stop-all) — the leather look
+   reads on both, unlike the translucent default that turns muddy over dark wood. */
+.soundbrett-theme-wfrp .sb-toggle-all,
+.soundbrett-theme-wfrp .sb-stop-all,
+.soundbrett-theme-wfrp .sb-routing-text {
+    background: url("/systems/wfrp4e/ui/buttons/button-wide-red.webp") repeat;
+    border: 1px solid black;
+    border-image: url("/systems/wfrp4e/ui/borders/footer-button.webp") 10 repeat;
+    border-image-width: 4px;
+    border-radius: 0;
+    color: var(--sb-on-accent);
+    text-shadow: 1px 1px 2px #000;
+    font-weight: bold;
+}
+
+.soundbrett-theme-wfrp .sb-toggle-all:hover,
+.soundbrett-theme-wfrp .sb-stop-all:hover,
+.soundbrett-theme-wfrp .sb-routing-text:hover {
+    box-shadow: inset 0 0 8px rgba(255, 200, 120, 0.7);
+    color: var(--sb-on-accent);
+    border-color: black;
+}
+
+/* The routing chip's inner icon + label inherit the light leather text on WFRP
+   (their neutral/arcane accent-soft color would vanish on the dark leather). */
+.soundbrett-theme-wfrp .sb-routing-text,
+.soundbrett-theme-wfrp .sb-routing-text > i,
+.soundbrett-theme-wfrp .sb-routing-text .sb-routing-label {
+    color: var(--sb-on-accent);
+    text-shadow: 1px 1px 2px #000;
+}
+
+/* Open-Soundbrett button in the playlist directory, exactly like the native
+   WFRP directory buttons (Create Playlist/Folder): button-wide-red + footer-
+   button frame + drop shadow. It lives outside the container, so the button
+   carries the theme class itself (see renderPlaylistDirectory). */
+.soundboard-btn.soundbrett-theme-wfrp {
+    background: url("/systems/wfrp4e/ui/buttons/button-wide-red.webp") repeat;
+    border: 1px solid black;
+    border-image: url("/systems/wfrp4e/ui/borders/footer-button.webp") 10 repeat;
+    border-image-width: 4px;
+    border-radius: 0;
+    box-shadow: 4px 4px 1px rgba(0, 0, 0, 0.52);
+    color: var(--sb-on-accent);
+    text-shadow: 1px 1px 2px #000;
+    font-weight: bold;
+}
