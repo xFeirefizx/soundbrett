@@ -1,0 +1,8 @@
+# Audio files are not versioned (keeps the repo lean)
+*.mp3
+*.wav
+*.ogg
+
+# Local development files — not part of the published module
+CLAUDE.md
+.claude/
