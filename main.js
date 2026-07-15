@@ -756,7 +756,10 @@ class SoundbrettApp extends HandlebarsApplicationMixin(ApplicationV2) {
     };
 
     static PARTS = {
-        main: { template: "modules/soundbrett/template.html" }
+        // scrollable: HandlebarsApplicationMixin saves/restores these elements'
+        // scroll positions across re-renders (play/stop/favorite all re-render),
+        // so the library view no longer jumps back to the top on every action.
+        main: { template: "modules/soundbrett/template.html", scrollable: [".sb-scroll", ".sb-active-list"] }
     };
 
     async _prepareContext(options) {
