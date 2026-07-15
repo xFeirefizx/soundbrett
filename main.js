@@ -934,7 +934,11 @@ class SoundbrettApp extends HandlebarsApplicationMixin(ApplicationV2) {
                     path: f,
                     id,
                     isFavorite: cfg.favorite,
-                    volume: cfg.volume,
+                    // Slider POSITION, not the gain: the sliders run on Foundry's
+                    // perceptual curve (AudioHelper.volumeToInput/inputToVolume,
+                    // like the core playlist sliders) — linear sliders feel too
+                    // coarse at the quiet end. Stored/emitted values stay real gain.
+                    volumeInput: foundry.audio.AudioHelper.volumeToInput(cfg.volume),
                     isLooping: cfg.loop,
                     tags: cfg.tags,
                     // JSON list of the original tags; the search filter reads
@@ -961,7 +965,8 @@ class SoundbrettApp extends HandlebarsApplicationMixin(ApplicationV2) {
             return {
                 id: id,
                 name: s.name,
-                volume: s.volume ?? 0.8,
+                // Slider position on the perceptual curve — see the tile entries.
+                volumeInput: foundry.audio.AudioHelper.volumeToInput(s.volume ?? 0.8),
                 isLooping: s.isLooping,
                 isPaused: s.isPaused,
                 // Visual feedback when a track is routed to only some players (or
@@ -1446,10 +1451,11 @@ class SoundbrettApp extends HandlebarsApplicationMixin(ApplicationV2) {
         });
 
         // Volume pre-set slider: persist the per-sound default (debounced).
+        // Slider value is a position on the perceptual curve -> map to gain.
         rootElement.querySelectorAll('.sb-preset-volume').forEach(slider => {
             slider.addEventListener('input', (ev) => {
                 const id = ev.currentTarget.dataset.id;
-                const volume = parseFloat(ev.currentTarget.value);
+                const volume = foundry.audio.AudioHelper.inputToVolume(ev.currentTarget.value);
                 debouncedPersistConfig(id, volume);
             });
         });
@@ -1571,7 +1577,10 @@ class SoundbrettApp extends HandlebarsApplicationMixin(ApplicationV2) {
         rootElement.querySelectorAll('.track-volume-slider').forEach(slider => {
             slider.addEventListener('input', (ev) => {
                 const id = ev.currentTarget.dataset.id;
-                const volume = parseFloat(ev.currentTarget.value);
+                // Perceptual curve: slider position -> real gain. Everything
+                // downstream (instance gain, activeState, socket, per-sound
+                // default) keeps working in gain.
+                const volume = foundry.audio.AudioHelper.inputToVolume(ev.currentTarget.value);
                 const track = activeSounds[id];
                 if (track && track.soundInstance) {
                     track.soundInstance.volume = volume;

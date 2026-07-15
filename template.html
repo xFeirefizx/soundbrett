@@ -35,7 +35,7 @@
                             <i class="fas fa-stop"></i>
                         </button>
 
-                        <input type="range" class="track-volume-slider" data-id="{{this.id}}" min="0" max="1" step="0.05" value="{{this.volume}}">
+                        <input type="range" class="track-volume-slider" data-id="{{this.id}}" min="0" max="1" step="0.05" value="{{this.volumeInput}}">
                     </div>
                 </div>
             {{/each}}
@@ -97,7 +97,7 @@
                                     <button class="sb-preset-preload" data-id="{{this.id}}" title="{{localize 'SOUNDBRETT.Preload'}}">
                                         <i class="fas fa-download"></i>
                                     </button>
-                                    <input type="range" class="sb-preset-volume" data-id="{{this.id}}" min="0" max="1" step="0.05" value="{{this.volume}}" title="{{localize 'SOUNDBRETT.Volume'}}">
+                                    <input type="range" class="sb-preset-volume" data-id="{{this.id}}" min="0" max="1" step="0.05" value="{{this.volumeInput}}" title="{{localize 'SOUNDBRETT.Volume'}}">
                                 </div>
                                 <div class="sb-settings-row sb-route-row" data-id="{{this.id}}">
                                     <i class="fas fa-bullhorn"></i>
