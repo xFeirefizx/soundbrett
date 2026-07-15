@@ -769,66 +769,91 @@ class SoundbrettApp extends HandlebarsApplicationMixin(ApplicationV2) {
         }
 
         const mainDirPath = game.settings.get('soundbrett', 'soundDirectory');
-        const categories = {};
-        const picker = foundry.applications?.apps?.FilePicker?.implementation || FilePicker;
         // Localized label/sentinel for the root directory (shown as a category
         // when the root holds sounds directly; also used to detect the root below).
         const rootLabel = game.i18n.localize("SOUNDBRETT.RootFolder");
 
-        const scanFolder = async (path, categoryName) => {
-            try {
-                const result = await picker.browse("data", path);
-                const currentSounds = result.files
-                    .filter(f => f.match(/\.(mp3|wav|ogg|webm|m4a|opus)$/i))
-                    .map(f => {
-                        const id = soundIdFromPath(f);
-                        const cfg = getSoundConfig(id);
-                        // File name (no extension) is the fallback; a custom name
-                        // from soundSettings overrides it as the display name.
-                        const fileName = decodeURIComponent(f.split('/').pop().split('.').shift());
-                        return {
-                            displayName: cfg.name?.trim() || fileName,
-                            fileName,
-                            path: f,
-                            id,
-                            isFavorite: cfg.favorite,
-                            volume: cfg.volume,
-                            isLooping: cfg.loop,
-                            tags: cfg.tags,
-                            // JSON list of the original tags; the search filter reads
-                            // it to match by tag and to show the matching tag chips.
-                            tagsJson: JSON.stringify(cfg.tags),
-                            // Per-sound routing override label + tooltip for the gear
-                            // panel's clickable target text ("Default (board)" when null).
-                            routingLabel: cfg.routing
-                                ? routingLabel(cfg.routing)
-                                : game.i18n.localize("SOUNDBRETT.RoutingInherit"),
-                            routingTitle: cfg.routing ? routingPlayerNames(cfg.routing) : ""
-                        };
-                    });
+        // Scan cache: the recursive FilePicker.browse walk (one request per
+        // folder — real HTTP roundtrips on remote storage) runs only on the
+        // first render and after an invalidation, NOT on every play/stop/
+        // favorite re-render. Invalidated by the toolbar refresh button
+        // (.sb-refresh) and automatically when soundDirectory changes (the dir
+        // key below). Only the FILE paths are cached — per-sound config is read
+        // fresh each render further down, so favorite/rename/tag changes always
+        // show current values. New/removed files appear after a refresh.
+        let uncachedFiles = null; // holds an empty scan's result (never cached)
+        if (!this._libraryCache || this._libraryCache.dir !== mainDirPath) {
+            const picker = foundry.applications?.apps?.FilePicker?.implementation || FilePicker;
+            const files = {}; // category name -> [file paths]
 
-                if (currentSounds.length > 0) {
-                    if (!categories[categoryName]) categories[categoryName] = [];
-                    categories[categoryName] = categories[categoryName].concat(currentSounds);
+            const scanFolder = async (path, categoryName) => {
+                try {
+                    const result = await picker.browse("data", path);
+                    const audioFiles = result.files.filter(f => f.match(/\.(mp3|wav|ogg|webm|m4a|opus)$/i));
+                    if (audioFiles.length > 0) {
+                        files[categoryName] = (files[categoryName] ?? []).concat(audioFiles);
+                    }
+                    for (let subDir of result.dirs) {
+                        const subFolderName = decodeURIComponent(subDir.split('/').filter(Boolean).pop());
+                        const nextCategoryName = categoryName === rootLabel
+                            ? subFolderName
+                            : `${categoryName} / ${subFolderName}`;
+                        await scanFolder(subDir, nextCategoryName);
+                    }
+                } catch (err) {
+                    console.warn(`Soundbrett | Error scanning ${path}:`, err);
                 }
+            };
 
-                for (let subDir of result.dirs) {
-                    const subFolderName = decodeURIComponent(subDir.split('/').filter(Boolean).pop());
-                    const nextCategoryName = categoryName === rootLabel
-                        ? subFolderName
-                        : `${categoryName} / ${subFolderName}`;
-                    await scanFolder(subDir, nextCategoryName);
-                }
-            } catch (err) {
-                console.warn(`Soundbrett | Error scanning ${path}:`, err);
-            }
-        };
+            await scanFolder(mainDirPath, rootLabel);
+            // Don't cache an EMPTY scan: with no sounds the toolbar (and its
+            // refresh button) isn't rendered, so an empty result would be stuck
+            // until reopen. Rescanning an empty dir is cheap anyway.
+            if (Object.keys(files).length > 0) this._libraryCache = { dir: mainDirPath, files };
+            else { this._libraryCache = null; uncachedFiles = files; }
+        }
+        const libraryFiles = this._libraryCache?.files ?? uncachedFiles ?? {};
 
-        await scanFolder(mainDirPath, rootLabel);
+        // Build the render-ready sound entries from the cached paths, merging in
+        // the CURRENT per-sound config (never cached).
+        const activeSoundsNow = globalThis.soundbrett.activeSounds;
+        const categories = {};
+        for (const [categoryName, paths] of Object.entries(libraryFiles)) {
+            categories[categoryName] = paths.map(f => {
+                const id = soundIdFromPath(f);
+                const cfg = getSoundConfig(id);
+                // File name (no extension) is the fallback; a custom name
+                // from soundSettings overrides it as the display name.
+                const fileName = decodeURIComponent(f.split('/').pop().split('.').shift());
+                return {
+                    displayName: cfg.name?.trim() || fileName,
+                    fileName,
+                    path: f,
+                    id,
+                    isFavorite: cfg.favorite,
+                    volume: cfg.volume,
+                    isLooping: cfg.loop,
+                    tags: cfg.tags,
+                    // JSON list of the original tags; the search filter reads
+                    // it to match by tag and to show the matching tag chips.
+                    tagsJson: JSON.stringify(cfg.tags),
+                    // Playing indicator: the tile shows a glyph + accent border
+                    // while its sound is in activeSounds. Render-time state is
+                    // enough — every play/stop/pause/end re-renders the board.
+                    isActive: !!activeSoundsNow[id],
+                    isActivePaused: !!activeSoundsNow[id]?.isPaused,
+                    // Per-sound routing override label + tooltip for the gear
+                    // panel's clickable target text ("Default (board)" when null).
+                    routingLabel: cfg.routing
+                        ? routingLabel(cfg.routing)
+                        : game.i18n.localize("SOUNDBRETT.RoutingInherit"),
+                    routingTitle: cfg.routing ? routingPlayerNames(cfg.routing) : ""
+                };
+            });
+        }
 
-        const activeSounds = globalThis.soundbrett.activeSounds;
-        const playingList = Object.keys(activeSounds).map(id => {
-            const s = activeSounds[id];
+        const playingList = Object.keys(activeSoundsNow).map(id => {
+            const s = activeSoundsNow[id];
             const recipients = normalizeRouting(s.recipients);
             return {
                 id: id,
@@ -944,6 +969,20 @@ class SoundbrettApp extends HandlebarsApplicationMixin(ApplicationV2) {
         const debouncedPersist = foundry.utils.debounce(() => persistActiveState(), 300);
         // Same for writing the durable per-sound volume default.
         const debouncedPersistConfig = foundry.utils.debounce((id, volume) => setSoundConfig(id, { volume }), 300);
+        // The volume SOCKET emit is throttled (trailing): at most one packet per
+        // id per 100ms, always ending on the final value — players track the
+        // drag near-live without dozens of broadcasts per second. (A debounce
+        // would go silent for the whole drag; a throttle keeps updating.)
+        const pendingVolumeEmits = {};
+        const throttledVolumeEmit = (id, volume) => {
+            const p = pendingVolumeEmits[id] ??= { timer: null, volume };
+            p.volume = volume;
+            if (p.timer) return;
+            p.timer = setTimeout(() => {
+                p.timer = null;
+                game.socket.emit('module.soundbrett', { action: "volume", id, volume: p.volume });
+            }, 100);
+        };
 
         rootElement.querySelectorAll('.sb-folder-header').forEach(header => {
             header.addEventListener('click', async (ev) => {
@@ -995,6 +1034,13 @@ class SoundbrettApp extends HandlebarsApplicationMixin(ApplicationV2) {
             refreshToggleAllIcon();
         });
         refreshToggleAllIcon();
+
+        // Rescan the sound folder on demand: the folder scan is cached (see
+        // _prepareContext), so new/removed files only show up after this.
+        rootElement.querySelector('.sb-refresh')?.addEventListener('click', () => {
+            this._libraryCache = null;
+            this.render();
+        });
 
         // Stop every active sound at once.
         rootElement.querySelector('.sb-stop-all')?.addEventListener('click', () => stopAllSounds());
@@ -1411,7 +1457,7 @@ class SoundbrettApp extends HandlebarsApplicationMixin(ApplicationV2) {
                 if (track && track.soundInstance) {
                     track.soundInstance.volume = volume;
                     track.volume = volume; // keep the intended volume in sync (persisted)
-                    game.socket.emit('module.soundbrett', { action: "volume", id, volume });
+                    throttledVolumeEmit(id, volume);
                     debouncedPersist();
                     // Feed the change back into the durable per-sound default.
                     debouncedPersistConfig(id, volume);
