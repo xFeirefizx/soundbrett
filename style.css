@@ -462,6 +462,7 @@
 #soundbrett-app .sb-preset-preload > i,
 #soundbrett-app .sb-rename > i,
 #soundbrett-app .sb-toggle-all > i,
+#soundbrett-app .sb-refresh > i,
 #soundbrett-app .sb-stop-all > i,
 #soundbrett-app .sb-routing-text > i {
     display: block;
@@ -481,14 +482,16 @@
    matches them to the search box height. The routing chip's inner gap matches its
    side padding so the icon/text/edge spacing reads balanced. */
 #soundbrett-app .sb-routing-text,
-#soundbrett-app .sb-toggle-all {
+#soundbrett-app .sb-toggle-all,
+#soundbrett-app .sb-refresh {
     height: auto;
     min-height: 0;
 }
 #soundbrett-app .sb-routing-text {
     gap: 9px; /* off-scale on purpose: matches this chip's 10px side padding */
 }
-#soundbrett-app .sb-toggle-all {
+#soundbrett-app .sb-toggle-all,
+#soundbrett-app .sb-refresh {
     width: 34px;
     padding: 0;
     gap: 0;
@@ -533,6 +536,19 @@
     border-color: var(--sb-accent);
     color: var(--sb-text-strong);
     box-shadow: 0 0 3px var(--sb-shadow);
+}
+
+/* Playing indicator: a tile whose sound is currently active shows a speaker
+   (or pause) glyph before its name plus an accent border, so the GM sees WHICH
+   tiles sound without opening the active list. State comes from the render
+   context (every play/stop/pause/end re-renders the board). */
+.sb-sound-node.sb-node-active {
+    border-color: var(--sb-accent);
+}
+
+.sb-playing-icon {
+    color: var(--sb-accent);
+    margin-right: 4px;
 }
 
 /* Favorite + gear icons overlaid on the right of the sound button. Light tint
@@ -792,8 +808,10 @@
     border-color: var(--sb-accent);
 }
 
-/* Compact expand/collapse-all folders toggle, sitting in the top toolbar row.
-   Icon-only (the action label lives in the title tooltip). */
+/* Compact expand/collapse-all folders toggle and the library refresh button,
+   both in the top toolbar row. Icon-only (action label lives in the tooltip);
+   refresh rescans the sound folder (the scan is cached, see _prepareContext). */
+.sb-refresh,
 .sb-toggle-all {
     flex: 0 0 auto;
     /* Foundry forces width:100% on content buttons — opt out so it stays compact. */
@@ -811,6 +829,7 @@
     justify-content: center;
 }
 
+.sb-refresh:hover,
 .sb-toggle-all:hover {
     color: var(--sb-text-strong);
     border-color: var(--sb-accent);
@@ -985,6 +1004,18 @@
     line-height: normal;
 }
 
+/* Playing indicator on the dark leather button: the dark-red accent border is
+   hidden by the border-image and the accent glyph would vanish on the leather —
+   use the bright favorite gold for the glyph and a soft warm inset glow
+   (a calmer sibling of the hover glow) as the active marker instead. */
+.soundbrett-theme-wfrp .sb-sound-node.sb-node-active {
+    box-shadow: inset 0 0 8px rgba(255, 200, 120, 0.45);
+}
+
+.soundbrett-theme-wfrp .sb-playing-icon {
+    color: var(--sb-fav);
+}
+
 /* Hover like WFRP's active controls: warm inset glow, texture stays. */
 .soundbrett-theme-wfrp .sb-sound-node:hover {
     background: url("/systems/wfrp4e/ui/buttons/button-wide-red.webp") repeat;
@@ -1011,6 +1042,7 @@
    dark bookshelf ground (toolbar) AND on parchment (stop-all) — the leather look
    reads on both, unlike the translucent default that turns muddy over dark wood. */
 .soundbrett-theme-wfrp .sb-toggle-all,
+.soundbrett-theme-wfrp .sb-refresh,
 .soundbrett-theme-wfrp .sb-stop-all,
 .soundbrett-theme-wfrp .sb-routing-text {
     background: url("/systems/wfrp4e/ui/buttons/button-wide-red.webp") repeat;
@@ -1024,6 +1056,7 @@
 }
 
 .soundbrett-theme-wfrp .sb-toggle-all:hover,
+.soundbrett-theme-wfrp .sb-refresh:hover,
 .soundbrett-theme-wfrp .sb-stop-all:hover,
 .soundbrett-theme-wfrp .sb-routing-text:hover {
     box-shadow: inset 0 0 8px rgba(255, 200, 120, 0.7);

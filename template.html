@@ -23,15 +23,15 @@
                     {{/if}}
 
                     <div class="track-controls">
-                        <button class="track-pause" data-id="{{this.id}}" title="Pause / Play">
+                        <button class="track-pause" data-id="{{this.id}}" title="{{localize 'SOUNDBRETT.PauseResume'}}">
                             <i class="fas {{#if this.isPaused}}fa-play{{else}}fa-pause{{/if}}"></i>
                         </button>
-                        
-                        <button class="track-loop {{#if this.isLooping}}active{{/if}}" data-id="{{this.id}}" title="Loop">
+
+                        <button class="track-loop {{#if this.isLooping}}active{{/if}}" data-id="{{this.id}}" title="{{localize 'SOUNDBRETT.Loop'}}">
                             <i class="fas fa-sync-alt"></i>
                         </button>
-                        
-                        <button class="track-stop" data-id="{{this.id}}" title="Stop">
+
+                        <button class="track-stop" data-id="{{this.id}}" title="{{localize 'SOUNDBRETT.Stop'}}">
                             <i class="fas fa-stop"></i>
                         </button>
 
@@ -51,6 +51,9 @@
             <button type="button" class="sb-routing-text" title="{{#if boardRoutingTitle}}{{boardRoutingTitle}}{{else}}{{localize 'SOUNDBRETT.RoutingTargetHint'}}{{/if}}">
                 <i class="fas fa-bullhorn"></i>
                 <span class="sb-routing-label">{{boardRoutingLabel}}</span>
+            </button>
+            <button type="button" class="sb-refresh" title="{{localize 'SOUNDBRETT.RefreshHint'}}">
+                <i class="fas fa-arrows-rotate"></i>
             </button>
             <button type="button" class="sb-toggle-all" title="{{localize 'SOUNDBRETT.ToggleAllHint'}}">
                 <i class="fas fa-angle-double-up"></i>
@@ -76,7 +79,7 @@
                     {{#each this.sounds}}
                         <div class="sb-sound-tile" data-id="{{this.id}}">
                             <div class="sb-tile-head">
-                                <button class="sb-sound-node" draggable="true" data-id="{{this.id}}" data-path="{{this.path}}" data-name="{{this.displayName}}" data-filename="{{this.fileName}}" data-tags="{{this.tagsJson}}" title="{{this.displayName}}">{{this.displayName}}</button>
+                                <button class="sb-sound-node{{#if this.isActive}} sb-node-active{{/if}}" draggable="true" data-id="{{this.id}}" data-path="{{this.path}}" data-name="{{this.displayName}}" data-filename="{{this.fileName}}" data-tags="{{this.tagsJson}}" title="{{this.displayName}}">{{#if this.isActive}}<i class="sb-playing-icon fas {{#if this.isActivePaused}}fa-pause{{else}}fa-volume-high{{/if}}"></i>{{/if}}{{this.displayName}}</button>
                                 <span class="sb-tile-actions">
                                     <i class="sb-fav-toggle fas fa-star {{#if this.isFavorite}}active{{/if}}" data-id="{{this.id}}" title="{{localize 'SOUNDBRETT.Favorite'}}"></i>
                                     <i class="sb-tile-gear fas fa-cog" data-id="{{this.id}}" title="{{localize 'SOUNDBRETT.SoundSettings'}}"></i>
