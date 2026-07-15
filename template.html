@@ -3,7 +3,7 @@
     <div class="sb-sticky">
         <div class="sb-active-container" style="{{#unless hasActiveTracks}}display:none;{{/unless}}">
             <div class="sb-active-header">
-                <h3 class="sb-active-title"><i class="fas fa-wave-sine"></i> {{localize "SOUNDBRETT.ActiveTracks"}}</h3>
+                <h3 class="sb-active-title"><i class="fas fa-wave-sine"></i> {{localize "SOUNDBRETT.ActiveTracks"}}<span class="sb-active-count">({{activeTracks.length}})</span></h3>
                 <span class="sb-active-tools">
                     <i class="sb-active-collapse fas fa-chevron-down" title="{{localize 'SOUNDBRETT.CollapseActiveHint'}}"></i>
                     <button type="button" class="sb-stop-all" title="{{localize 'SOUNDBRETT.StopAllHint'}}">

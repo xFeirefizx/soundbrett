@@ -746,6 +746,13 @@
     animation: sb-active-in 160ms ease-out;
 }
 
+/* Respect the OS-level reduced-motion preference: show the panel immediately. */
+@media (prefers-reduced-motion: reduce) {
+    .sb-active-enter {
+        animation: none;
+    }
+}
+
 /* Title + Stop-all share one row; the dashed divider sits on the header so it
    spans the full width regardless of the button. */
 .sb-active-header {
@@ -762,6 +769,20 @@
     margin: 0;
     color: var(--sb-primary-light);
     white-space: nowrap;
+}
+
+/* Running-track count in the active header: only visible while the list is
+   collapsed (the header is all that remains, so it must carry the info). */
+.sb-active-count {
+    display: none;
+    margin-left: var(--sb-gap-xs);
+    font-size: var(--sb-fs-sm);
+    font-weight: normal;
+    color: var(--sb-text-muted);
+}
+
+.sb-active-container.sb-collapsed .sb-active-count {
+    display: inline;
 }
 
 /* Right side of the active header: collapse chevron + stop-all button. */
