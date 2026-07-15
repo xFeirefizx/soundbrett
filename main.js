@@ -163,9 +163,15 @@ function serializeActiveSounds() {
             volume: s.volume ?? 0.8,
             isLooping: s.isLooping,
             isPaused: s.isPaused,
+            // Position sync: virtual start timestamp (epoch ms). Elapsed wall-
+            // clock time since it equals the intended playback position (resume
+            // shifts it by the pause duration — see the pause/resume handler).
+            startedAt: s.startedAt ?? null,
             // Who hears this track — the reconcile net reads it to filter players.
             recipients: normalizeRouting(s.recipients)
         };
+        // Where a paused track stands (seconds) — restore/reconcile resume there.
+        if (s.isPaused) out[id].pausedPosition = s.pausedPosition ?? 0;
     }
     return out;
 }
@@ -176,8 +182,75 @@ async function persistActiveState() {
     await game.settings.set('soundbrett', 'activeState', serializeActiveSounds());
 }
 
+// Pauses a Sound without tripping Foundry's state guard. Sound#pause throws
+// unless the state is exactly PLAYING — but Sound#playing is ALSO true while
+// STARTING (play requested, actual start still pending; game.audio.play does
+// not await Sound#play, so a freshly created sound sits in that window). A
+// pause landing in the window (GM pauses right after starting; reconcile races
+// a fresh play) must WAIT for the real start and pause then — skipping would
+// leave the sound audibly running against the shared state. The wait is
+// bounded: if the start never happens (load failure), give up after a timeout
+// and let the reconcile net re-align later. The final state check also dedupes
+// concurrent callers (socket pause + reconcile hitting the same sound): the
+// second one sees PAUSED and does nothing. Never rejects.
+async function safePause(s) {
+    if (!s || typeof s.pause !== "function") return;
+    const STATES = s.constructor?.STATES;
+    if (!STATES) return;
+    if (s._state === STATES.STARTING) {
+        await Promise.race([
+            new Promise(res => s.addEventListener("play", res, { once: true })),
+            new Promise(res => setTimeout(res, 3000))
+        ]);
+        // The "play" event fires just BEFORE Sound#play flips the state to
+        // PLAYING (one microtask later) — yield once so the check below sees it.
+        await Promise.resolve();
+    }
+    if (s._state === STATES.PLAYING) s.pause();
+}
+
+// Creates and starts a Sound for a track from the shared state, at the
+// position it SHOULD be at right now (position sync). 'startedAt' is the
+// virtual start timestamp from activeState; the elapsed wall-clock time since
+// it is mapped into the sound: loops wrap into the cycle (modulo duration),
+// a non-looping track whose time already ran out resolves to null (finished
+// while everyone was away — never replayed). Paused tracks start at their
+// stored pausedPosition (callers pause the instance right after, which makes
+// a later resume continue there). Falls back to offset 0 when the duration
+// is unknown — streaming MP3s can report a non-finite duration — which is
+// exactly the pre-position-sync behavior. Shared by the GM restore and the
+// players' reconcile so both compute positions identically.
+async function playFromState(t) {
+    const sound = new foundry.audio.Sound(t.path);
+    await sound.load();
+    const dur = sound.duration;
+    const hasDur = Number.isFinite(dur) && dur > 0;
+    let offset = 0;
+    if (t.isPaused) {
+        offset = Math.max(0, t.pausedPosition ?? 0);
+        // A loop's clock keeps counting past the duration — wrap into the cycle.
+        if (hasDur && t.isLooping) offset = offset % dur;
+    } else if (t.startedAt) {
+        const elapsed = Math.max(0, (Date.now() - t.startedAt) / 1000);
+        if (hasDur) {
+            if (t.isLooping) offset = elapsed % dur;
+            else if (elapsed >= dur) return null; // one-shot finished while away
+            else offset = elapsed;
+        }
+    }
+    await sound.play({
+        volume: t.volume ?? 0.8,
+        loop: !!t.isLooping,
+        fade: MICRO_FADE_MS,
+        offset
+    });
+    return sound;
+}
+
 // Restores the audio state after a reload. Runs on EVERY client (including
-// players that join later). Never writes back and never emits sockets.
+// players that join later). Never writes back and never emits sockets (one
+// narrow, documented exception: the GM restore prunes one-shots that FINISHED
+// during the downtime — see below).
 async function restoreActiveState() {
     const state = game.settings.get('soundbrett', 'activeState') ?? {};
     const ids = Object.keys(state);
@@ -191,23 +264,33 @@ async function restoreActiveState() {
 
     if (game.user.isGM) {
         const activeSounds = globalThis.soundbrett.activeSounds;
+        let droppedFinished = false;
         for (const id of ids) {
             const t = state[id];
-            const soundInstance = await game.audio.play(t.path, {
-                volume: t.volume ?? 0.8,
-                loop: t.isLooping ?? false,
-                fade: MICRO_FADE_MS,
-                spatialize: false
-            });
-            // Keep logically paused tracks silent locally (board shows them paused).
-            // pause() throws when not PLAYING -> only call it then.
-            if (t.isPaused && soundInstance.playing && typeof soundInstance.pause === "function") {
-                soundInstance.pause();
+            let soundInstance;
+            try {
+                soundInstance = await playFromState(t);
+            } catch (err) {
+                // Missing/unreadable file: keep going so one bad entry doesn't
+                // abort the whole restore. The entry stays in the state (it may
+                // be a transient storage hiccup); any later persist prunes it.
+                console.warn(`Soundbrett | Could not restore ${t.path}:`, err);
+                continue;
             }
+            // null = a non-looping track ran out while everyone was away.
+            if (!soundInstance) { droppedFinished = true; continue; }
+            // Keep logically paused tracks silent locally (board shows them paused).
+            // safePause guards Foundry's PLAYING-only state check. It records the
+            // current position (the restored pausedPosition), so resume continues there.
+            if (t.isPaused) await safePause(soundInstance);
             activeSounds[id] = {
                 id, name: t.name, path: t.path,
                 volume: t.volume ?? 0.8,
                 soundInstance, isLooping: !!t.isLooping, isPaused: !!t.isPaused,
+                // Carry the virtual start over UNCHANGED: the sound resumed at
+                // elapsed-so-far, so position math stays continuous across reloads.
+                startedAt: t.startedAt ?? Date.now(),
+                pausedPosition: t.pausedPosition,
                 // GM hears every track locally regardless; recipients is kept so a
                 // re-persist (and players' reconcile) preserves the original target.
                 recipients: normalizeRouting(t.recipients)
@@ -215,6 +298,12 @@ async function restoreActiveState() {
             // Self-clean: drop a restored one-shot from the state once it ends.
             soundInstance.addEventListener("end", () => onSoundEnded(id, soundInstance));
         }
+        // Narrow, deliberate exception to "restore never writes back": REMOVE
+        // one-shots that finished during the downtime from the shared state.
+        // Pure idempotent cleanup (the same effect onSoundEnded would have had
+        // live); without it they linger as ghosts in "Active Playback" and in
+        // every player's reconcile. Removal can't loop or re-trigger anything.
+        if (droppedFinished) await persistActiveState();
         if (ui.soundbrettApp) ui.soundbrettApp.render();
     } else {
         await reconcilePlayerState();
@@ -258,17 +347,20 @@ async function reconcilePlayerState() {
 
         if (!remoteSounds[id]) {
             if (t.isPaused) continue; // paused tracks stay silent
-            remoteSounds[id] = game.audio.play(t.path, {
-                volume: t.volume ?? 0.8,
-                loop: !!t.isLooping,
-                fade: MICRO_FADE_MS,
-                spatialize: false
-            }).then(s => {
+            // Start at the position the track SHOULD be at (position sync):
+            // late joiners drop into a long loop mid-cycle instead of at 0. A
+            // one-shot whose time already ran out resolves to null — kept in
+            // the map so it isn't re-created on every reconcile; the GM's next
+            // persist removes the state entry (and step 1 then drops it here).
+            remoteSounds[id] = playFromState(t).then(s => {
                 // If the GM paused while loading, catch up on the real start
                 // (otherwise the loop would keep running despite the pause).
                 const cur = (game.settings.get('soundbrett', 'activeState') ?? {})[id];
-                if (s && cur && cur.isPaused && s.playing) s.pause();
+                if (s && cur && cur.isPaused) safePause(s);
                 return s;
+            }).catch(err => {
+                console.warn(`Soundbrett | Could not reconcile ${t.path}:`, err);
+                return null; // downstream handlers all guard on a null sound
             });
             continue;
         }
@@ -276,7 +368,10 @@ async function reconcilePlayerState() {
         const s = await remoteSounds[id];
         if (!s) continue;
         const PAUSED = s.constructor?.STATES?.PAUSED;
-        if (t.isPaused && s.playing) s.pause();
+        // Fire-and-forget: safePause may wait for a STARTING sound to actually
+        // begin — the loop must not stall on it (loop/volume below are fine to
+        // set first, pause preserves them).
+        if (t.isPaused) safePause(s);
         // Resume only a genuinely PAUSED instance — never re-trigger a sound that
         // already finished. Foundry's Sound#play allows play() from STOPPED, so the
         // previous `!s.playing` check restarted finished one-shots on EVERY reconcile
@@ -364,7 +459,9 @@ async function playSound({ id, path, name } = {}) {
         // Intended volume kept separate from the live (mid-fade) gain — see
         // serializeActiveSounds. Updated in sync by the volume slider handler.
         volume: cfg.volume,
-        soundInstance, isLooping: cfg.loop, isPaused: false, recipients
+        soundInstance, isLooping: cfg.loop, isPaused: false, recipients,
+        // Virtual start for position sync (see playFromState/serializeActiveSounds).
+        startedAt: Date.now()
     };
 
     // Self-clean: when a one-shot reaches its natural end, drop it from the state.
@@ -415,9 +512,7 @@ function stopAllSounds() {
 // This decodes the whole file into memory — intended for the preload use case
 // (larger/longer sounds that should start instantly and in sync). Emits no socket.
 async function preloadBuffer(path) {
-    const SoundCls = foundry.audio?.Sound;
-    if (!SoundCls) return game.audio.constructor.preloadSound(path); // older cores
-    const sound = new SoundCls(path, { forceBuffer: true });
+    const sound = new foundry.audio.Sound(path, { forceBuffer: true });
     await sound.load();
     return sound;
 }
@@ -521,7 +616,9 @@ Hooks.once('ready', () => {
             const entry = remoteSounds[payload.id];
             if (entry) {
                 const s = await entry;
-                if (s && s.playing && typeof s.pause === "function") s.pause();
+                // safePause: the sound may still be STARTING (game.audio.play
+                // does not await Sound#play) when a fast GM pause arrives.
+                if (s) await safePause(s);
             }
 
         } else if (payload.action === "resume") {
@@ -566,7 +663,9 @@ Hooks.once('ready', () => {
     // Safety net against lost socket signals: when the shared 'activeState'
     // changes, every player reconciles its local playback with it.
     Hooks.on('updateSetting', (setting) => {
-        if (!setting?.key?.endsWith('activeState')) return;
+        // Exact match — endsWith would also fire on another module's
+        // "othermodule.activeState" and trigger needless reconciles.
+        if (setting?.key !== 'soundbrett.activeState') return;
         if (!game.user.isGM) reconcilePlayerState();
     });
 });
@@ -581,9 +680,13 @@ function getActiveTheme() {
 }
 
 Hooks.once('init', () => {
+    // Settings name/hint/choices are passed as BARE i18n keys: 'init' fires
+    // before 'i18nInit', so module translations aren't guaranteed here — the
+    // settings UI localizes the keys itself when it renders (same reasoning as
+    // the i18n key in DEFAULT_OPTIONS.window.title).
     game.settings.register('soundbrett', 'soundDirectory', {
-        name: game.i18n.localize("SOUNDBRETT.SettingsDirName"),
-        hint: game.i18n.localize("SOUNDBRETT.SettingsDirHint"),
+        name: "SOUNDBRETT.SettingsDirName",
+        hint: "SOUNDBRETT.SettingsDirHint",
         scope: "world",
         config: true,
         type: String,
@@ -629,15 +732,15 @@ Hooks.once('init', () => {
     // Visual theme (world-scope, purely cosmetic — never changes behaviour).
     // Only offer WFRP when the wfrp4e system is active, otherwise the referenced
     // graphic assets/fonts are missing.
-    const themeChoices = { neutral: game.i18n.localize("SOUNDBRETT.ThemeNeutral") };
+    const themeChoices = { neutral: "SOUNDBRETT.ThemeNeutral" };
     if (game.system?.id === "wfrp4e") {
-        themeChoices.wfrp = game.i18n.localize("SOUNDBRETT.ThemeWfrp");
+        themeChoices.wfrp = "SOUNDBRETT.ThemeWfrp";
     }
-    themeChoices.arcane = game.i18n.localize("SOUNDBRETT.ThemeArcane");
+    themeChoices.arcane = "SOUNDBRETT.ThemeArcane";
 
     game.settings.register('soundbrett', 'theme', {
-        name: game.i18n.localize("SOUNDBRETT.SettingsThemeName"),
-        hint: game.i18n.localize("SOUNDBRETT.SettingsThemeHint"),
+        name: "SOUNDBRETT.SettingsThemeName",
+        hint: "SOUNDBRETT.SettingsThemeHint",
         scope: "world",
         config: true,
         type: String,
@@ -955,6 +1058,9 @@ class SoundbrettApp extends HandlebarsApplicationMixin(ApplicationV2) {
             if (!activeList || !activeCollapseBtn) return;
             const collapsed = !!this._activeCollapsed;
             activeList.style.display = collapsed ? 'none' : '';
+            // The track count in the header (.sb-active-count) shows only while
+            // collapsed — the class gates its CSS display.
+            activeContainer.classList.toggle('sb-collapsed', collapsed);
             activeCollapseBtn.className = collapsed
                 ? 'sb-active-collapse fas fa-chevron-right'
                 : 'sb-active-collapse fas fa-chevron-down';
@@ -1421,10 +1527,23 @@ class SoundbrettApp extends HandlebarsApplicationMixin(ApplicationV2) {
                     s.volume = vol;
                     s.loop = track.isLooping;
                     track.isPaused = false;
+                    // Shift the virtual start by the pause duration so elapsed
+                    // wall-clock time equals the playback position again
+                    // (position sync, see playFromState).
+                    track.startedAt = Date.now() - (track.pausedPosition ?? 0) * 1000;
+                    delete track.pausedPosition;
                     game.socket.emit('module.soundbrett', { action: "resume", id });
                 } else {
-                    // Sound#pause throws when not PLAYING -> only pause then.
-                    if (s.playing && typeof s.pause === "function") s.pause();
+                    // Remember WHERE we pause (persisted; restore/reconcile resume
+                    // there). Read the instance clock while it is still playing,
+                    // fall back to the virtual-start math.
+                    const pos = Number.isFinite(s.currentTime)
+                        ? s.currentTime
+                        : track.startedAt ? (Date.now() - track.startedAt) / 1000 : 0;
+                    track.pausedPosition = Math.max(0, pos);
+                    // safePause: a click within the STARTING window (right after
+                    // play) must defer the pause, not crash or skip it.
+                    safePause(s);
                     track.isPaused = true;
                     game.socket.emit('module.soundbrett', { action: "pause", id });
                 }
