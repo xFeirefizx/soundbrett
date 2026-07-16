@@ -1,0 +1,42 @@
+<div class="soundbrett-container sb-part-active soundbrett-theme-{{theme}}">
+    <div class="sb-active-container" style="{{#unless hasActiveTracks}}display:none;{{/unless}}">
+        <div class="sb-active-header">
+            <h3 class="sb-active-title"><i class="fas fa-wave-sine"></i> {{localize "SOUNDBRETT.ActiveTracks"}}<span class="sb-active-count">({{activeTracks.length}})</span></h3>
+            <span class="sb-active-tools">
+                <i class="sb-active-collapse fas fa-chevron-down" data-action="collapseActive" title="{{localize 'SOUNDBRETT.CollapseActiveHint'}}"></i>
+                <button type="button" class="sb-stop-all" data-action="stopAll" title="{{localize 'SOUNDBRETT.StopAllHint'}}">
+                    <i class="fas fa-stop"></i> {{localize "SOUNDBRETT.StopAll"}}
+                </button>
+            </span>
+        </div>
+        <div class="sb-active-list">
+            {{#each activeTracks}}
+                <div class="sb-active-row" data-id="{{this.id}}">
+                    <span class="track-name" title="{{this.name}}">{{this.name}}</span>
+
+                    {{#if this.isCustomTarget}}
+                        <span class="sb-track-target" title="{{this.recipientsTitle}}">
+                            <i class="fas fa-user-check"></i> {{this.recipientsLabel}}
+                        </span>
+                    {{/if}}
+
+                    <div class="track-controls">
+                        <button class="track-pause" data-action="trackPause" data-id="{{this.id}}" title="{{localize 'SOUNDBRETT.PauseResume'}}">
+                            <i class="fas {{#if this.isPaused}}fa-play{{else}}fa-pause{{/if}}"></i>
+                        </button>
+
+                        <button class="track-loop {{#if this.isLooping}}active{{/if}}" data-action="trackLoop" data-id="{{this.id}}" title="{{localize 'SOUNDBRETT.Loop'}}">
+                            <i class="fas fa-sync-alt"></i>
+                        </button>
+
+                        <button class="track-stop" data-action="trackStop" data-id="{{this.id}}" title="{{localize 'SOUNDBRETT.Stop'}}">
+                            <i class="fas fa-stop"></i>
+                        </button>
+
+                        <input type="range" class="track-volume-slider" data-id="{{this.id}}" min="0" max="1" step="0.05" value="{{this.volumeInput}}">
+                    </div>
+                </div>
+            {{/each}}
+        </div>
+    </div>
+</div>

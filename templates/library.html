@@ -1,0 +1,83 @@
+<div class="soundbrett-container sb-part-library soundbrett-theme-{{theme}}">
+    {{#if hasSounds}}
+    <div class="sb-sticky">
+        <div class="sb-topbar">
+            <div class="sb-search">
+                <i class="fas fa-search"></i>
+                <input type="search" class="sb-search-input" placeholder="{{localize 'SOUNDBRETT.SearchPlaceholder'}}" autocomplete="off">
+            </div>
+            <button type="button" class="sb-routing-text" data-action="routeBoard" title="{{#if boardRoutingTitle}}{{boardRoutingTitle}}{{else}}{{localize 'SOUNDBRETT.RoutingTargetHint'}}{{/if}}">
+                <i class="fas fa-bullhorn"></i>
+                <span class="sb-routing-label">{{boardRoutingLabel}}</span>
+            </button>
+            <button type="button" class="sb-refresh" data-action="refreshLibrary" title="{{localize 'SOUNDBRETT.RefreshHint'}}">
+                <i class="fas fa-arrows-rotate"></i>
+            </button>
+            <button type="button" class="sb-toggle-all" data-action="toggleAllFolders" title="{{localize 'SOUNDBRETT.ToggleAllHint'}}">
+                <i class="fas fa-angle-double-up"></i>
+            </button>
+        </div>
+    </div>
+    {{/if}}
+
+    <div class="sb-scroll">
+    {{#if hasSounds}}
+        {{#each categories}}
+            <div class="sb-category-wrapper">
+                <div class="sb-folder-header" data-action="toggleFolder" data-category="{{this.name}}">
+                    <span><i class="fas {{#if this.isFavorites}}fa-star{{else}}fa-folder-open{{/if}}"></i> {{this.name}}</span>
+                    <span class="sb-folder-tools">
+                        {{#if this.isFavorites}}
+                            <i class="sb-preload-favs fas fa-download" data-action="preloadFavorites" title="{{localize 'SOUNDBRETT.PreloadFavorites'}}"></i>
+                        {{/if}}
+                        <i class="fas {{#if this.isCollapsed}}fa-chevron-right{{else}}fa-chevron-down{{/if}} toggle-icon"></i>
+                    </span>
+                </div>
+                <div class="sb-grid" style="{{#if this.isCollapsed}}display:none;{{/if}}">
+                    {{#each this.sounds}}
+                        <div class="sb-sound-tile" data-id="{{this.id}}">
+                            <div class="sb-tile-head">
+                                <button class="sb-sound-node{{#if this.isActive}} sb-node-active{{/if}}" data-action="playTile" draggable="true" data-id="{{this.id}}" data-path="{{this.path}}" data-name="{{this.displayName}}" data-filename="{{this.fileName}}" data-tags="{{this.tagsJson}}" title="{{this.displayName}}">{{#if this.isActive}}<i class="sb-playing-icon fas {{#if this.isActivePaused}}fa-pause{{else}}fa-volume-high{{/if}}"></i>{{/if}}{{this.displayName}}</button>
+                                <span class="sb-tile-actions">
+                                    <i class="sb-fav-toggle fas fa-star {{#if this.isFavorite}}active{{/if}}" data-action="toggleFavorite" data-id="{{this.id}}" title="{{localize 'SOUNDBRETT.Favorite'}}"></i>
+                                    <i class="sb-tile-gear fas fa-cog" data-action="toggleGear" data-id="{{this.id}}" title="{{localize 'SOUNDBRETT.SoundSettings'}}"></i>
+                                </span>
+                            </div>
+                            <div class="sb-tile-match-tags"></div>
+                            <div class="sb-tile-settings" style="display:none;">
+                                <div class="sb-settings-row">
+                                    <button class="sb-preset-loop {{#if this.isLooping}}active{{/if}}" data-action="presetLoop" data-id="{{this.id}}" title="{{localize 'SOUNDBRETT.Loop'}}">
+                                        <i class="fas fa-sync-alt"></i>
+                                    </button>
+                                    <button class="sb-rename sb-preset-btn" data-action="renameSound" data-id="{{this.id}}" title="{{localize 'SOUNDBRETT.Rename'}}">
+                                        <i class="fas fa-pen"></i>
+                                    </button>
+                                    <button class="sb-preset-preload" data-action="preloadTile" data-id="{{this.id}}" title="{{localize 'SOUNDBRETT.Preload'}}">
+                                        <i class="fas fa-download"></i>
+                                    </button>
+                                    <input type="range" class="sb-preset-volume" data-id="{{this.id}}" min="0" max="1" step="0.05" value="{{this.volumeInput}}" title="{{localize 'SOUNDBRETT.Volume'}}">
+                                </div>
+                                <div class="sb-settings-row sb-route-row" data-id="{{this.id}}">
+                                    <i class="fas fa-bullhorn"></i>
+                                    <button type="button" class="sb-route-text" data-action="routeSound" title="{{#if this.routingTitle}}{{this.routingTitle}}{{else}}{{localize 'SOUNDBRETT.RoutingTargetHint'}}{{/if}}">
+                                        <span class="sb-route-label">{{this.routingLabel}}</span>
+                                    </button>
+                                </div>
+                                <div class="sb-tags-row" data-id="{{this.id}}">
+                                    {{#each this.tags}}
+                                        <span class="sb-tag-chip" data-tag="{{this}}">#{{this}} <i class="sb-tag-remove fas fa-times" data-action="removeTag" title="{{localize 'SOUNDBRETT.RemoveTag'}}"></i></span>
+                                    {{/each}}
+                                    <input type="text" class="sb-tag-add" placeholder="{{localize 'SOUNDBRETT.AddTag'}}" autocomplete="off">
+                                </div>
+                            </div>
+                        </div>
+                    {{/each}}
+                </div>
+            </div>
+        {{/each}}
+        <p class="sb-no-results">{{localize "SOUNDBRETT.NoSearchResults"}}</p>
+    {{else}}
+        <p class="sb-empty">{{localize "SOUNDBRETT.NoSounds"}}</p>
+    {{/if}}
+    </div>
+</div>

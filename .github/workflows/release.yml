@@ -38,7 +38,7 @@ jobs:
 
       # Allowlist of runtime files only — no dev files end up in the package.
       - name: Create module zip
-        run: zip module.zip module.json main.js style.css template.html LICENSE README.md lang/en.json lang/de.json
+        run: zip module.zip module.json main.js style.css templates/active.html templates/library.html LICENSE README.md lang/en.json lang/de.json
 
       - name: Create release and attach assets
         uses: softprops/action-gh-release@v2
