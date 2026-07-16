@@ -124,6 +124,14 @@ function getSoundConfig(id) {
     return cfg;
 }
 
+// True when a sound has any stored gear-panel setting — a lean soundSettings
+// entry with a key other than 'favorite' (the star shows that one itself).
+// Drives the gear icon tint on the tile (same gold as the favorite star).
+function hasCustomSoundConfig(id) {
+    const lean = (game.settings.get('soundbrett', 'soundSettings') ?? {})[id];
+    return !!lean && Object.keys(lean).some(k => k !== "favorite");
+}
+
 // Merges a partial config for one sound. GM only (writes a world-scope setting).
 // Keys equal to the default are pruned, empty entries removed, to keep it lean.
 async function setSoundConfig(id, partial) {
@@ -140,6 +148,11 @@ async function setSoundConfig(id, partial) {
     if (Object.keys(lean).length === 0) delete all[id];
     else all[id] = lean;
     await game.settings.set('soundbrett', 'soundSettings', all);
+    // Mirror gear tint + panel presets in place: most gear-panel edits (loop
+    // preset, volume, tags, routing) persist WITHOUT a render, and the
+    // active-row loop/volume feedback writes back here too. Renders set the
+    // same state from the hasCustom context flag.
+    if (ui.soundbrettApp?.rendered) ui.soundbrettApp.syncGearState(id);
 }
 
 // Clears the whole world-scope 'soundSettings' store — every sound falls back
@@ -1026,6 +1039,7 @@ class SoundbrettApp extends HandlebarsApplicationMixin(ApplicationV2) {
             toggleGear: SoundbrettApp.#onToggleGear,
             presetLoop: SoundbrettApp.#onPresetLoop,
             renameSound: SoundbrettApp.#onRenameSound,
+            resetSound: SoundbrettApp.#onResetSound,
             preloadTile: SoundbrettApp.#onPreloadTile,
             routeSound: SoundbrettApp.#onRouteSound,
             removeTag: SoundbrettApp.#onRemoveTag
@@ -1120,6 +1134,9 @@ class SoundbrettApp extends HandlebarsApplicationMixin(ApplicationV2) {
                     path: f,
                     id,
                     isFavorite: cfg.favorite,
+                    // Gear tint: the sound has stored gear-panel settings
+                    // (anything but the favorite flag, which the star shows).
+                    hasCustom: hasCustomSoundConfig(id),
                     // Slider POSITION, not the gain: the sliders run on Foundry's
                     // perceptual curve (AudioHelper.volumeToInput/inputToVolume,
                     // like the core playlist sliders) — linear sliders feel too
@@ -1371,6 +1388,28 @@ class SoundbrettApp extends HandlebarsApplicationMixin(ApplicationV2) {
             if (!track || !label) return;
             const text = trackTimeLabel(track);
             if (label.textContent !== text) label.textContent = text;
+        });
+    }
+
+    // Mirrors a sound's stored config onto its tile(s) in place — called by
+    // setSoundConfig after every write, covering duplicate tiles of the same
+    // sound (folder + Favorites group). Two things are kept in sync: (1) the
+    // gear icon tint (favorite-star gold while gear-panel settings deviate
+    // from the defaults, dropped again once the last one returns to default);
+    // (2) the gear panel's preset controls (loop button, volume slider) — the
+    // Active Playback write-back persists loop/volume via setSoundConfig
+    // WITHOUT a library render, so an open panel would otherwise keep showing
+    // stale presets. Idempotent for the panel's own handlers (they set the
+    // same state before persisting).
+    syncGearState(id) {
+        if (!game.user?.isGM) return;
+        const custom = hasCustomSoundConfig(id);
+        const cfg = getSoundConfig(id);
+        this.element?.querySelectorAll(`.sb-sound-tile[data-id="${id}"]`).forEach(tile => {
+            tile.querySelector('.sb-tile-gear')?.classList.toggle('active', custom);
+            tile.querySelector('.sb-preset-loop')?.classList.toggle('active', cfg.loop);
+            const slider = tile.querySelector('.sb-preset-volume');
+            if (slider) slider.value = foundry.audio.AudioHelper.volumeToInput(cfg.volume);
         });
     }
 
@@ -1781,6 +1820,36 @@ class SoundbrettApp extends HandlebarsApplicationMixin(ApplicationV2) {
 
         const clean = result.trim();
         await setSoundConfig(id, { name: clean === fileName ? "" : clean });
+        this.render({ parts: ["library"] });
+    }
+
+    // Per-sound reset (the rotate-left button in the gear panel): clears THIS
+    // sound's gear-panel settings — volume, loop, custom name, tags, routing —
+    // back to the defaults, without touching any other sound. The favorite
+    // flag deliberately stays: it belongs to the star, not the gear (matching
+    // the gear-tint logic). Confirmation first, since name and tags hang on
+    // it. setSoundConfig's lean-pruning then drops the store entry entirely
+    // (or down to the favorite flag) — the gear goes gray again. Name/tags may
+    // change structure (Favorites order, search index) -> library re-render.
+    static async #onResetSound(event, target) {
+        event.preventDefault();
+        const id = target.dataset.id;
+        const node = target.closest('.sb-sound-tile')?.querySelector('.sb-sound-node');
+        if (!id || !node) return;
+        let ok;
+        try {
+            ok = await foundry.applications.api.DialogV2.confirm({
+                window: { title: game.i18n.localize("SOUNDBRETT.ResetSoundTitle") },
+                content: `<p>${escapeHtml(game.i18n.format("SOUNDBRETT.ResetSoundContent", { name: node.dataset.name }))}</p>`,
+                rejectClose: false
+            });
+        } catch (e) { return; } // dialog dismissed
+        if (!ok) return;
+        await setSoundConfig(id, {
+            volume: DEFAULT_SOUND_CONFIG.volume,
+            loop: DEFAULT_SOUND_CONFIG.loop,
+            name: "", tags: [], routing: null
+        });
         this.render({ parts: ["library"] });
     }
 

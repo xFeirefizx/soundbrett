@@ -40,7 +40,7 @@
                                 <button class="sb-sound-node{{#if this.isActive}} sb-node-active{{/if}}" data-action="playTile" draggable="true" data-id="{{this.id}}" data-path="{{this.path}}" data-name="{{this.displayName}}" data-filename="{{this.fileName}}" data-tags="{{this.tagsJson}}" title="{{this.displayName}}">{{#if this.isActive}}<i class="sb-playing-icon fas {{#if this.isActivePaused}}fa-pause{{else}}fa-volume-high{{/if}}"></i>{{/if}}{{this.displayName}}</button>
                                 <span class="sb-tile-actions">
                                     <i class="sb-fav-toggle fas fa-star {{#if this.isFavorite}}active{{/if}}" data-action="toggleFavorite" data-id="{{this.id}}" title="{{localize 'SOUNDBRETT.Favorite'}}"></i>
-                                    <i class="sb-tile-gear fas fa-cog" data-action="toggleGear" data-id="{{this.id}}" title="{{localize 'SOUNDBRETT.SoundSettings'}}"></i>
+                                    <i class="sb-tile-gear fas fa-cog{{#if this.hasCustom}} active{{/if}}" data-action="toggleGear" data-id="{{this.id}}" title="{{localize 'SOUNDBRETT.SoundSettings'}}"></i>
                                 </span>
                             </div>
                             <div class="sb-tile-match-tags"></div>
@@ -54,6 +54,9 @@
                                     </button>
                                     <button class="sb-preset-preload" data-action="preloadTile" data-id="{{this.id}}" title="{{localize 'SOUNDBRETT.Preload'}}">
                                         <i class="fas fa-download"></i>
+                                    </button>
+                                    <button class="sb-preset-reset" data-action="resetSound" data-id="{{this.id}}" title="{{localize 'SOUNDBRETT.ResetSound'}}">
+                                        <i class="fas fa-rotate-left"></i>
                                     </button>
                                     <input type="range" class="sb-preset-volume" data-id="{{this.id}}" min="0" max="1" step="0.05" value="{{this.volumeInput}}" title="{{localize 'SOUNDBRETT.Volume'}}">
                                 </div>
