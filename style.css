@@ -135,9 +135,14 @@
     padding: 0;
     background: var(--sb-container-bg);
     color: var(--sb-text);
-    /* The container owns the scroll (its .sb-scroll body); keep the window from
-       adding a second scrollbar. */
+    /* The library part owns the scroll (its .sb-scroll body); keep the window
+       from adding a second scrollbar. */
     overflow: hidden;
+    /* Flex shell for the two template parts (AppV2 PARTS render as siblings in
+       here): the active part keeps its natural height, the library part fills
+       the rest and scrolls. */
+    display: flex;
+    flex-direction: column;
 }
 
 /* Window header for the NON-wfrp themes. While wfrp4e is active under Foundry's
@@ -163,20 +168,45 @@
 #soundbrett-app:not(.soundbrett-theme-wfrp) .window-header button.header-control {
     background-image: none;
 }
+/* Same leak, two more spots: the system's dark-theme rules also paint the
+   bookshelf texture as the background of EVERY generic .application AND frame
+   its .window-content with an ornate border-image (app-header.webp strip,
+   10-13px) plus a black inset shadow — that border-image is the "WFRP frame"
+   that showed around neutral/arcane. Reclaim both with our own surface. */
+#soundbrett-app:not(.soundbrett-theme-wfrp) {
+    background: var(--sb-container-bg);
+}
+#soundbrett-app:not(.soundbrett-theme-wfrp) .window-content {
+    border: none;
+    /* border-image is NOT part of the border shorthand — reset it explicitly,
+       or the system's image keeps painting at its border-image-width. */
+    border-image: none;
+    box-shadow: none;
+}
 
-/* App-shell layout: a fixed header (.sb-sticky) + a single scrolling body
-   (.sb-scroll). This is more robust than position:sticky, which only sticks
-   within its parent's box and unsticks once that box scrolls past. */
+/* App-shell layout: the two template parts stack inside the .window-content
+   flex column (see above) — the active part on top at natural height, the
+   library part below with a fixed toolbar (.sb-sticky) and the single
+   scrolling body (.sb-scroll). More robust than position:sticky, which only
+   sticks within its parent's box and unsticks once that box scrolls past.
+   NOTE: deliberately no background here — the parts stay transparent so the
+   .window-content paints ONE continuous surface (a per-part background would
+   visibly restart the WFRP bookshelf texture at the part boundary). */
 .soundbrett-container {
     font-family: var(--sb-font);
-    /* Own background + text color -> the look is independent of the active
-       system's window (some tint app windows light + text dark). color also
-       ensures .track-name (which has no own color) stays readable. */
-    background: var(--sb-container-bg);
+    /* Text color -> readable independent of the active system's window tint
+       (also covers .track-name, which has no own color). */
     color: var(--sb-text);
-    /* Fill the window-content so the inner body (not the window) scrolls. */
-    height: 100%;
     box-sizing: border-box;
+}
+
+/* Part roots inside the .window-content flex shell. */
+.sb-part-active {
+    flex: 0 0 auto;
+}
+.sb-part-library {
+    flex: 1 1 auto;
+    min-height: 0; /* may shrink below content height, so .sb-scroll scrolls */
     display: flex;
     flex-direction: column;
 }
@@ -723,8 +753,12 @@
     border: 1px solid var(--sb-primary);
     padding: 8px;
     border-radius: 4px;
-    /* Sits above the toolbar inside the fixed header zone. */
-    margin-bottom: 8px;
+    /* Sits in its own template part ABOVE the library part's toolbar. The 6px
+       side/top margin replaces the old .sb-sticky padding around it; 2px bottom
+       + the toolbar's 6px top padding restore the former 8px gap. (display:none
+       on the container collapses the margins too, so an empty active part takes
+       no space at all.) */
+    margin: 6px 6px 2px;
 }
 
 /* Cap a long active list so it scrolls within the header instead of pushing the
@@ -918,15 +952,14 @@
    ========================================================================= */
 
 /* Dark frame ground BEHIND the parchment (like the dark area around the
-   parchment content surface in WFRP journals). A little padding -> the dark
-   frame becomes visible around the parchment panels. */
-.soundbrett-container.soundbrett-theme-wfrp,
+   parchment content surface in WFRP journals). Painted once on the
+   .window-content (the template parts are transparent, see the app-shell
+   comment) so the texture runs continuously across the part boundary; the
+   padding makes the dark frame visible around the parchment panels. */
 #soundbrett-app.soundbrett-theme-wfrp .window-content {
     background-color: #1c140d;
     background-image: url("/systems/wfrp4e/ui/backgrounds/bookshelf-texture.webp");
     background-repeat: repeat;
-}
-.soundbrett-container.soundbrett-theme-wfrp {
     padding: 10px;
 }
 

@@ -404,9 +404,15 @@ function stopLocalSound(id) {
     }
 }
 
-// Re-renders the open board if there is one (after a state change).
+// Refreshes the open board after a PLAYBACK state change: re-renders only the
+// small "active" template part (the library part — open gear panels, search
+// filter, scroll position — keeps its DOM) and syncs the tiles' playing
+// indicator in place, since that lives in the un-rendered library part.
 function refreshBoard() {
-    if (ui.soundbrettApp?.rendered) ui.soundbrettApp.render();
+    const app = ui.soundbrettApp;
+    if (!app?.rendered) return;
+    app.render({ parts: ["active"] });
+    app.syncTileIndicators();
 }
 
 // Natural end of a sound. Foundry's "end" event fires only on real completion —
@@ -855,14 +861,47 @@ class SoundbrettApp extends HandlebarsApplicationMixin(ApplicationV2) {
         classes: ["soundbrett-app"],
         tag: "div",
         window: { title: "SOUNDBRETT.AppTitle", icon: "fas fa-music", resizable: true },
-        position: { width: 480, height: 600 }
+        position: { width: 480, height: 600 },
+        // Click handling via AppV2's event delegation: every clickable control
+        // carries a data-action in the templates; AppV2 listens once on the app
+        // root and calls the handler with `this` bound to the instance and the
+        // innermost [data-action] element as `target` (so nested actions — e.g.
+        // preloadFavorites inside the toggleFolder header — don't double-fire).
+        // The handlers are static private methods further down; referencing them
+        // here works because static METHODS exist before static FIELD
+        // initializers (like this literal) run. Non-click events (input,
+        // keydown, dragstart) can't be actions — see _onFirstRender.
+        actions: {
+            collapseActive: SoundbrettApp.#onCollapseActive,
+            stopAll: SoundbrettApp.#onStopAll,
+            trackPause: SoundbrettApp.#onTrackPause,
+            trackLoop: SoundbrettApp.#onTrackLoop,
+            trackStop: SoundbrettApp.#onTrackStop,
+            toggleFolder: SoundbrettApp.#onToggleFolder,
+            toggleAllFolders: SoundbrettApp.#onToggleAllFolders,
+            refreshLibrary: SoundbrettApp.#onRefreshLibrary,
+            preloadFavorites: SoundbrettApp.#onPreloadFavorites,
+            routeBoard: SoundbrettApp.#onRouteBoard,
+            playTile: SoundbrettApp.#onPlayTile,
+            toggleFavorite: SoundbrettApp.#onToggleFavorite,
+            toggleGear: SoundbrettApp.#onToggleGear,
+            presetLoop: SoundbrettApp.#onPresetLoop,
+            renameSound: SoundbrettApp.#onRenameSound,
+            preloadTile: SoundbrettApp.#onPreloadTile,
+            routeSound: SoundbrettApp.#onRouteSound,
+            removeTag: SoundbrettApp.#onRemoveTag
+        }
     };
 
+    // Two template parts: playback (play/stop/pause/one-shot end) re-renders
+    // ONLY "active" (see refreshBoard) — the library DOM with its open gear
+    // panels, search filter and scroll position is never rebuilt by playback.
+    // "library" re-renders only on structural changes (favorite, rename,
+    // refresh). scrollable: the mixin saves/restores those elements' scroll
+    // positions across re-renders of their own part.
     static PARTS = {
-        // scrollable: HandlebarsApplicationMixin saves/restores these elements'
-        // scroll positions across re-renders (play/stop/favorite all re-render),
-        // so the library view no longer jumps back to the top on every action.
-        main: { template: "modules/soundbrett/template.html", scrollable: [".sb-scroll", ".sb-active-list"] }
+        active: { template: "modules/soundbrett/templates/active.html", scrollable: [".sb-active-list"] },
+        library: { template: "modules/soundbrett/templates/library.html", scrollable: [".sb-scroll"] }
     };
 
     async _prepareContext(options) {
@@ -1017,6 +1056,86 @@ class SoundbrettApp extends HandlebarsApplicationMixin(ApplicationV2) {
         };
     }
 
+    /* ----------------------------------------------------------------------
+       One-time wiring (per open). Clicks are handled by the actions delegation
+       (DEFAULT_OPTIONS.actions); input/keydown/dragstart cannot be actions, so
+       they are delegated manually on the app root. The root element is rebuilt
+       on every OPEN (close/reopen counts as a first render again), but persists
+       across re-renders — so this wiring never needs re-attaching.
+       ---------------------------------------------------------------------- */
+    _onFirstRender(context, options) {
+        super._onFirstRender(context, options);
+
+        // Instance state that must survive re-renders AND reopens (hence ??=).
+        this._openGears ??= new Set();    // gear panels currently open (by sound id)
+        this._filterQuery ??= "";         // current search query
+        this._activeCollapsed ??= false;  // "Active Playback" collapsed to its header
+        this._hadActive ??= false;        // for the one-time slide-in animation
+        this._pendingVolumeEmits ??= {};  // trailing-throttle state per sound id
+        // Volume fires very often while dragging -> debounce persistence; same
+        // for writing the durable per-sound volume default.
+        this._debouncedPersist ??= foundry.utils.debounce(() => persistActiveState(), 300);
+        this._debouncedPersistConfig ??= foundry.utils.debounce((id, volume) => setSoundConfig(id, { volume }), 300);
+
+        // Players need no listeners — the app should not be open for them at all.
+        if (!game.user.isGM) return;
+        const root = this.element;
+
+        root.addEventListener('input', (ev) => {
+            const t = ev.target;
+            if (t.classList.contains('sb-search-input')) return this._applyFilter(t.value);
+            if (t.classList.contains('sb-preset-volume')) {
+                // Slider value is a position on the perceptual curve -> map to gain.
+                this._debouncedPersistConfig(t.dataset.id, foundry.audio.AudioHelper.inputToVolume(t.value));
+                return;
+            }
+            if (t.classList.contains('track-volume-slider')) {
+                const id = t.dataset.id;
+                // Perceptual curve: slider position -> real gain. Everything
+                // downstream (instance gain, activeState, socket, per-sound
+                // default) keeps working in gain.
+                const volume = foundry.audio.AudioHelper.inputToVolume(t.value);
+                const track = globalThis.soundbrett.activeSounds[id];
+                if (!track || !track.soundInstance) return;
+                track.soundInstance.volume = volume;
+                track.volume = volume; // keep the intended volume in sync (persisted)
+                this._throttledVolumeEmit(id, volume);
+                this._debouncedPersist();
+                // Feed the change back into the durable per-sound default.
+                this._debouncedPersistConfig(id, volume);
+            }
+        });
+
+        root.addEventListener('keydown', (ev) => {
+            const t = ev.target;
+            if (!(t instanceof HTMLElement)) return;
+            if (t.classList.contains('sb-search-input')) {
+                if (ev.key === 'Escape') { t.value = ''; this._applyFilter(''); }
+                return;
+            }
+            if (t.classList.contains('sb-tag-add')) this._onTagAddKeydown(ev, t);
+        });
+
+        // Drag onto the macro hotbar -> see the hotbarDrop hook. The payload
+        // mirrors what playSound/toggleSound expect (id, encoded path, name).
+        root.addEventListener('dragstart', (ev) => {
+            const node = ev.target instanceof HTMLElement ? ev.target.closest('.sb-sound-node') : null;
+            if (!node) return;
+            ev.dataTransfer.setData("text/plain", JSON.stringify({
+                type: "soundbrett-sound",
+                id: node.dataset.id,
+                path: node.dataset.path,
+                name: node.dataset.name
+            }));
+            ev.dataTransfer.effectAllowed = "copy";
+        });
+    }
+
+    /* ----------------------------------------------------------------------
+       Per-render state re-application, scoped to the parts that actually
+       re-rendered (options.parts). No listener wiring happens here anymore —
+       clicks are actions, everything else is delegated in _onFirstRender.
+       ---------------------------------------------------------------------- */
     _onRender(context, options) {
         super._onRender(context, options);
 
@@ -1040,557 +1159,500 @@ class SoundbrettApp extends HandlebarsApplicationMixin(ApplicationV2) {
             titleIcon.classList.toggle('fa-music', !wfrp);
         }
 
-        // Players need no listeners — the app should not be open for them at all
         if (!game.user.isGM) return;
+        const parts = options.parts ?? [];
 
-        const rootElement = this.element;
-        const activeSounds = globalThis.soundbrett.activeSounds;
-
-        // Calm reveal: animate the "Active Playback" panel only when it FIRST
-        // appears (empty -> non-empty), not on every re-render (pause/volume keep
-        // re-rendering the whole board, which would otherwise re-trigger the slide).
-        const activeContainer = rootElement.querySelector('.sb-active-container');
-        const hasActiveNow = !!activeContainer && activeContainer.style.display !== 'none';
-        if (hasActiveNow && !this._hadActive) activeContainer.classList.add('sb-active-enter');
-        this._hadActive = hasActiveNow;
-
-        // Active panel collapse: hide just the track list (keep the sticky header)
-        // so a long list can't fill the sticky area and bury the library on scroll.
-        // State lives on the instance so it survives the frequent re-renders.
-        const activeList = activeContainer?.querySelector('.sb-active-list');
-        const activeCollapseBtn = activeContainer?.querySelector('.sb-active-collapse');
-        const applyActiveCollapsed = () => {
-            if (!activeList || !activeCollapseBtn) return;
-            const collapsed = !!this._activeCollapsed;
-            activeList.style.display = collapsed ? 'none' : '';
-            // The track count in the header (.sb-active-count) shows only while
-            // collapsed — the class gates its CSS display.
-            activeContainer.classList.toggle('sb-collapsed', collapsed);
-            activeCollapseBtn.className = collapsed
-                ? 'sb-active-collapse fas fa-chevron-right'
-                : 'sb-active-collapse fas fa-chevron-down';
-        };
-        activeCollapseBtn?.addEventListener('click', () => {
-            this._activeCollapsed = !this._activeCollapsed;
-            applyActiveCollapsed();
-        });
-        applyActiveCollapsed();
-
-        // Volume fires very often while dragging -> debounce persistence.
-        const debouncedPersist = foundry.utils.debounce(() => persistActiveState(), 300);
-        // Same for writing the durable per-sound volume default.
-        const debouncedPersistConfig = foundry.utils.debounce((id, volume) => setSoundConfig(id, { volume }), 300);
-        // The volume SOCKET emit is throttled (trailing): at most one packet per
-        // id per 100ms, always ending on the final value — players track the
-        // drag near-live without dozens of broadcasts per second. (A debounce
-        // would go silent for the whole drag; a throttle keeps updating.)
-        const pendingVolumeEmits = {};
-        const throttledVolumeEmit = (id, volume) => {
-            const p = pendingVolumeEmits[id] ??= { timer: null, volume };
-            p.volume = volume;
-            if (p.timer) return;
-            p.timer = setTimeout(() => {
-                p.timer = null;
-                game.socket.emit('module.soundbrett', { action: "volume", id, volume: p.volume });
-            }, 100);
-        };
-
-        rootElement.querySelectorAll('.sb-folder-header').forEach(header => {
-            header.addEventListener('click', async (ev) => {
-                const content = ev.currentTarget.nextElementSibling;
-                const icon = ev.currentTarget.querySelector('.toggle-icon');
-                // Visible (display !== "none") -> will be collapsed now
-                const willCollapse = content.style.display !== "none";
-                content.style.display = willCollapse ? "none" : "grid";
-                icon.className = willCollapse
-                    ? "fas fa-chevron-right toggle-icon"
-                    : "fas fa-chevron-down toggle-icon";
-
-                // Remember the state per user so it survives re-renders and reloads
-                const categoryName = ev.currentTarget.dataset.category;
-                const folderState = foundry.utils.deepClone(game.settings.get('soundbrett', 'folderState') ?? {});
-                folderState[categoryName] = willCollapse;
-                await game.settings.set('soundbrett', 'folderState', folderState);
-            });
-        });
-
-        // Expand/collapse ALL folders (incl. Favorites) at once. Same in-place DOM
-        // toggle as the single header above, but writes folderState only once.
-        const setAllFolders = async (collapsed) => {
-            const folderState = foundry.utils.deepClone(game.settings.get('soundbrett', 'folderState') ?? {});
-            rootElement.querySelectorAll('.sb-folder-header').forEach(header => {
-                header.nextElementSibling.style.display = collapsed ? "none" : "grid";
-                header.querySelector('.toggle-icon').className = collapsed
-                    ? "fas fa-chevron-right toggle-icon"
-                    : "fas fa-chevron-down toggle-icon";
-                folderState[header.dataset.category] = collapsed;
-            });
-            await game.settings.set('soundbrett', 'folderState', folderState);
-        };
-        // Single toggle: collapse all if anything is open, otherwise expand all.
-        // The icon reflects the action it will perform next.
-        const toggleAllBtn = rootElement.querySelector('.sb-toggle-all');
-        const anyFolderOpen = () =>
-            [...rootElement.querySelectorAll('.sb-grid')].some(g => g.style.display !== 'none');
-        const refreshToggleAllIcon = () => {
-            const icon = toggleAllBtn?.querySelector('i');
-            // State-based chevron: expanded folders -> down arrow, all collapsed
-            // -> up arrow (per user preference; the arrow shows the current state).
-            if (icon) icon.className = anyFolderOpen()
-                ? 'fas fa-angle-double-down' // something open (expanded)
-                : 'fas fa-angle-double-up';  // all collapsed
-        };
-        toggleAllBtn?.addEventListener('click', async () => {
-            await setAllFolders(anyFolderOpen()); // collapse if any open, else expand
-            refreshToggleAllIcon();
-        });
-        refreshToggleAllIcon();
-
-        // Rescan the sound folder on demand: the folder scan is cached (see
-        // _prepareContext), so new/removed files only show up after this.
-        rootElement.querySelector('.sb-refresh')?.addEventListener('click', () => {
-            this._libraryCache = null;
-            this.render();
-        });
-
-        // Stop every active sound at once.
-        rootElement.querySelector('.sb-stop-all')?.addEventListener('click', () => stopAllSounds());
-
-        // Preload ALL favorites at once: warm every tile in the Favorites group's
-        // grid (reuses the per-sound preloadSound). Sits in the Favorites header, so
-        // it stops propagation to avoid toggling the folder. Shows a spinner while
-        // the GM's own loads run, then a check (all ok) or warning (any failed).
-        rootElement.querySelector('.sb-preload-favs')?.addEventListener('click', async (ev) => {
-            ev.preventDefault();
-            ev.stopPropagation();
-            const icon = ev.currentTarget;
-            if (icon.classList.contains('fa-spinner')) return; // already running
-            const wrapper = icon.closest('.sb-category-wrapper');
-            const nodes = Array.from(wrapper?.querySelectorAll('.sb-sound-node') ?? []);
-            if (!nodes.length) return;
-            const restore = icon.className;
-            icon.className = 'sb-preload-favs fas fa-spinner fa-spin';
-            const results = await Promise.all(nodes.map(n =>
-                preloadSound({ path: n.dataset.path, name: n.dataset.name })));
-            icon.className = results.every(Boolean)
-                ? 'sb-preload-favs fas fa-check'
-                : 'sb-preload-favs fas fa-triangle-exclamation';
-            setTimeout(() => { icon.className = restore; }, 1500);
-        });
-
-        // --- Board-wide routing default --------------------------------------
-        // One clickable text shows who newly started sounds go to (this GM's
-        // choice, client-scope). A click opens the unified routing picker. Does NOT
-        // affect already running tracks and does NOT re-render; only the label +
-        // tooltip update in place.
-        const routingTextBtn = rootElement.querySelector('.sb-routing-text');
-        const routingLabelEl = rootElement.querySelector('.sb-routing-label');
-        const refreshBoardRouting = () => {
-            const r = getBoardRouting();
-            if (routingLabelEl) routingLabelEl.textContent = routingLabel(r);
-            if (routingTextBtn) routingTextBtn.title =
-                routingPlayerNames(r) || game.i18n.localize("SOUNDBRETT.RoutingTargetHint");
-        };
-        routingTextBtn?.addEventListener('click', async () => {
-            const result = await promptRouting({ current: getBoardRouting(), allowInherit: false });
-            if (!result) return; // cancelled -> keep previous
-            await game.settings.set('soundbrett', 'routingDefault', result.v ?? { mode: 'all' });
-            refreshBoardRouting();
-        });
-
-        // --- Search / filter -------------------------------------------------
-        // Pure in-place DOM filter (no render, no folderState write): tiles whose
-        // name doesn't match are hidden; folders with at least one match show and
-        // auto-expand, folders with none hide entirely. Clearing restores the
-        // remembered collapsed state. The query is kept on the app instance so it
-        // survives a re-render triggered by play/stop/favorite while searching.
-        const searchInput = rootElement.querySelector('.sb-search-input');
-        const noResults = rootElement.querySelector('.sb-no-results');
-
-        // Reads a tile's tag list (stored as JSON on the sound node).
-        const tileTags = (node) => {
-            try { return JSON.parse(node?.dataset.tags || '[]'); } catch (e) { return []; }
-        };
-        // Shows the given tags as read-only chips under a tile (or clears them).
-        const setMatchChips = (tile, hitTags) => {
-            const box = tile.querySelector('.sb-tile-match-tags');
-            if (!box) return;
-            if (!hitTags.length) { box.innerHTML = ''; box.style.display = 'none'; return; }
-            box.innerHTML = hitTags.map(t => `<span class="sb-tag-chip sb-tag-chip-static">#${escapeHtml(t)}</span>`).join('');
-            box.style.display = 'flex';
-        };
-
-        const applyFilter = (raw) => {
-            const q = (raw ?? '').trim().toLowerCase();
-            this._filterQuery = q;
-            const wrappers = rootElement.querySelectorAll('.sb-category-wrapper');
-
-            if (!q) {
-                // Restore each folder to its remembered open/closed state.
-                const folderState = game.settings.get('soundbrett', 'folderState') ?? {};
-                wrappers.forEach(wrapper => {
-                    wrapper.style.display = '';
-                    const header = wrapper.querySelector('.sb-folder-header');
-                    const collapsed = folderState[header.dataset.category] === true;
-                    wrapper.querySelector('.sb-grid').style.display = collapsed ? 'none' : 'grid';
-                    header.querySelector('.toggle-icon').className = collapsed
-                        ? 'fas fa-chevron-right toggle-icon'
-                        : 'fas fa-chevron-down toggle-icon';
-                    wrapper.querySelectorAll('.sb-sound-tile').forEach(t => {
-                        t.style.display = '';
-                        setMatchChips(t, []); // hide match chips when not searching
-                    });
-                });
-                if (noResults) noResults.style.display = 'none';
-                return;
-            }
-
-            // Whitespace-split the query into terms; a tile matches if ANY term
-            // matches (OR across terms). So "green blue" keeps both a "blue"-tagged
-            // and a "green"-tagged sound — each term finds its own sounds, the union
-            // stays visible. Tags may contain spaces, so a tile's tags are NOT
-            // split — only the query is.
-            const terms = q.split(/\s+/).filter(Boolean);
-            let anyVisible = false;
-            wrappers.forEach(wrapper => {
-                let matches = 0;
-                wrapper.querySelectorAll('.sb-sound-tile').forEach(tile => {
-                    const node = tile.querySelector('.sb-sound-node');
-                    // Match the display name, the original file name (so a renamed
-                    // sound stays findable by its old name) and the tags. When a tag
-                    // is what matched (any term), show it as a chip under the tile.
-                    const name = (node?.dataset.name ?? '').toLowerCase();
-                    const file = (node?.dataset.filename ?? '').toLowerCase();
-                    const tagHits = tileTags(node).filter(t => {
-                        const tl = t.toLowerCase();
-                        return terms.some(term => tl.includes(term));
-                    });
-                    const textHit = terms.some(term => name.includes(term) || file.includes(term));
-                    const hit = textHit || tagHits.length > 0;
-                    tile.style.display = hit ? '' : 'none';
-                    setMatchChips(tile, hit ? tagHits : []);
-                    if (hit) matches++;
-                });
-                if (matches > 0) {
-                    wrapper.style.display = '';
-                    wrapper.querySelector('.sb-grid').style.display = 'grid'; // auto-expand
-                    wrapper.querySelector('.toggle-icon').className = 'fas fa-chevron-down toggle-icon';
-                    anyVisible = true;
-                } else {
-                    wrapper.style.display = 'none';
-                }
-            });
-            if (noResults) noResults.style.display = anyVisible ? 'none' : 'block';
-        };
-
-        if (searchInput) {
-            searchInput.addEventListener('input', (ev) => applyFilter(ev.currentTarget.value));
-            searchInput.addEventListener('keydown', (ev) => {
-                if (ev.key === 'Escape') { searchInput.value = ''; applyFilter(''); }
-            });
-            // Re-apply a query that survived a re-render (play/fav rebuild the DOM).
-            if (this._filterQuery) {
-                searchInput.value = this._filterQuery;
-                applyFilter(this._filterQuery);
-            }
+        if (parts.includes("active")) {
+            // Calm reveal: animate the "Active Playback" panel only when it FIRST
+            // appears (empty -> non-empty), not on every re-render (pause/volume
+            // keep re-rendering this part, which would re-trigger the slide).
+            const activeContainer = appRoot.querySelector('.sb-active-container');
+            const hasActiveNow = !!activeContainer && activeContainer.style.display !== 'none';
+            if (hasActiveNow && !this._hadActive) activeContainer.classList.add('sb-active-enter');
+            this._hadActive = hasActiveNow;
+            this._applyActiveCollapsed();
         }
 
-        rootElement.querySelectorAll('.sb-sound-node').forEach(button => {
-            // Click (re)starts the sound with its persisted per-sound defaults.
-            button.addEventListener('click', (ev) => {
-                ev.preventDefault();
-                const node = ev.currentTarget;
-                playSound({ id: node.dataset.id, path: node.dataset.path, name: node.dataset.name });
+        if (parts.includes("library")) {
+            this._refreshToggleAllIcon();
+            // Re-open gear panels that were open before the re-render (all tiles
+            // sharing the id — e.g. a sound in both its folder and Favorites).
+            this._openGears.forEach(id => {
+                appRoot.querySelectorAll(`.sb-sound-tile[data-id="${id}"] .sb-tile-settings`)
+                    .forEach(panel => { panel.style.display = "flex"; });
             });
+            // Re-apply a search query that survived the re-render.
+            const searchInput = appRoot.querySelector('.sb-search-input');
+            if (searchInput && this._filterQuery) {
+                searchInput.value = this._filterQuery;
+                this._applyFilter(this._filterQuery);
+            }
+        }
+    }
 
-            // Drag onto the macro hotbar -> see the hotbarDrop hook. The payload
-            // mirrors what playSound/toggleSound expect (id, encoded path, name).
-            button.addEventListener('dragstart', (ev) => {
-                const node = ev.currentTarget;
-                ev.dataTransfer.setData("text/plain", JSON.stringify({
-                    type: "soundbrett-sound",
-                    id: node.dataset.id,
-                    path: node.dataset.path,
-                    name: node.dataset.name
-                }));
-                ev.dataTransfer.effectAllowed = "copy";
-            });
-        });
+    /* ----------------------------------------------------------------------
+       In-place DOM helpers (no render)
+       ---------------------------------------------------------------------- */
 
-        // Favorite toggle: flip the icon immediately for feedback, persist, then
-        // re-render so the synthetic "Favorites" group gains/loses this sound.
-        rootElement.querySelectorAll('.sb-fav-toggle').forEach(btn => {
-            btn.addEventListener('click', async (ev) => {
-                ev.preventDefault();
-                ev.stopPropagation();
-                const id = ev.currentTarget.dataset.id;
-                const isFavorite = !ev.currentTarget.classList.contains('active');
-                ev.currentTarget.classList.toggle('active', isFavorite);
-                await setSoundConfig(id, { favorite: isFavorite });
-                this.render();
-            });
-        });
-
-        // Rename: open a small dialog to set a custom display name. Empty input
-        // (or the file name itself) clears the override, reverting to the file name.
-        // Persisting changes structure (Favorites order, search index) -> re-render.
-        rootElement.querySelectorAll('.sb-rename').forEach(btn => {
-            btn.addEventListener('click', async (ev) => {
-                ev.preventDefault();
-                ev.stopPropagation();
-                const node = ev.currentTarget.closest('.sb-sound-tile').querySelector('.sb-sound-node');
-                const id = node.dataset.id;
-                const fileName = node.dataset.filename;
-                const current = node.dataset.name; // effective display name (custom or file name)
-
-                let result;
-                try {
-                    result = await foundry.applications.api.DialogV2.prompt({
-                        window: { title: game.i18n.localize("SOUNDBRETT.RenameTitle") },
-                        content: `<p>${escapeHtml(game.i18n.localize("SOUNDBRETT.RenameHint"))}</p>`
-                            + `<input type="text" name="sbname" value="${escapeHtml(current)}" placeholder="${escapeHtml(fileName)}" style="width:100%;" autofocus>`,
-                        ok: {
-                            label: game.i18n.localize("SOUNDBRETT.RenameSave"),
-                            callback: (event, button) => button.form.elements.sbname.value
-                        },
-                        rejectClose: false
-                    });
-                } catch (e) { return; } // dialog dismissed
-                if (result === null || result === undefined) return;
-
-                const clean = result.trim();
-                await setSoundConfig(id, { name: clean === fileName ? "" : clean });
-                this.render();
-            });
-        });
-
-        // Gear: toggle the per-tile settings panel (loop + rename + preload +
-        // volume + routing + tags). The open state is tracked per sound id on the
-        // instance so it SURVIVES a re-render — playing/stopping a sound (or a
-        // one-shot ending) rebuilds the DOM via render(), which would otherwise
-        // snap an open panel shut.
-        this._openGears ??= new Set();
-        rootElement.querySelectorAll('.sb-tile-gear').forEach(btn => {
-            btn.addEventListener('click', (ev) => {
-                ev.preventDefault();
-                ev.stopPropagation();
-                const tile = ev.currentTarget.closest('.sb-sound-tile');
-                const id = tile?.dataset.id;
-                const panel = tile?.querySelector('.sb-tile-settings');
-                if (!panel || !id) return;
-                const open = panel.style.display === "none";
-                panel.style.display = open ? "flex" : "none";
-                if (open) this._openGears.add(id); else this._openGears.delete(id);
-            });
-        });
-        // Re-open panels that were open before a re-render (all tiles sharing the
-        // id — e.g. a sound shown in both its folder and the Favorites group).
-        this._openGears.forEach(id => {
-            rootElement.querySelectorAll(`.sb-sound-tile[data-id="${id}"] .sb-tile-settings`)
-                .forEach(panel => { panel.style.display = "flex"; });
-        });
-
-        // Loop pre-set: persist the default for the NEXT start (does not touch a
-        // currently playing instance — that is what the Active Playback loop is for).
-        rootElement.querySelectorAll('.sb-preset-loop').forEach(btn => {
-            btn.addEventListener('click', (ev) => {
-                ev.preventDefault();
-                ev.stopPropagation();
-                const id = ev.currentTarget.dataset.id;
-                const loop = !ev.currentTarget.classList.contains('active');
-                ev.currentTarget.classList.toggle('active', loop);
-                setSoundConfig(id, { loop });
-            });
-        });
-
-        // Preload: warm the buffer at all players (and locally) so the next start
-        // is instant and in sync. The button shows a spinner while the GM's own
-        // load runs and a check/warning afterwards (a proxy — players differ).
-        rootElement.querySelectorAll('.sb-preset-preload').forEach(btn => {
-            btn.addEventListener('click', async (ev) => {
-                ev.preventDefault();
-                ev.stopPropagation();
-                const b = ev.currentTarget;
-                if (b.disabled) return;
-                const node = b.closest('.sb-sound-tile')?.querySelector('.sb-sound-node');
-                if (!node) return;
-                const icon = b.querySelector('i');
-                const restore = icon.className;
-                icon.className = 'fas fa-spinner fa-spin';
-                b.disabled = true;
-                const ok = await preloadSound({ path: node.dataset.path, name: node.dataset.name });
-                icon.className = ok ? 'fas fa-check' : 'fas fa-triangle-exclamation';
-                setTimeout(() => { icon.className = restore; b.disabled = false; }, 1500);
-            });
-        });
-
-        // Per-sound routing override: one clickable text opens the unified picker
-        // (incl. "Default (board)" = inherit). Persists into soundSettings.routing
-        // (null = inherit). Updates label + tooltip IN PLACE, no re-render.
-        rootElement.querySelectorAll('.sb-route-row').forEach(row => {
-            const id = row.dataset.id;
-            const btn = row.querySelector('.sb-route-text');
-            const labelEl = row.querySelector('.sb-route-label');
-            if (!btn || !id) return;
-            const refresh = () => {
-                const cfg = getSoundConfig(id);
-                if (labelEl) labelEl.textContent = cfg.routing
-                    ? routingLabel(cfg.routing)
-                    : game.i18n.localize("SOUNDBRETT.RoutingInherit");
-                btn.title = (cfg.routing ? routingPlayerNames(cfg.routing) : "")
-                    || game.i18n.localize("SOUNDBRETT.RoutingTargetHint");
-            };
-            btn.addEventListener('click', async (ev) => {
-                ev.preventDefault();
-                ev.stopPropagation();
-                const result = await promptRouting({ current: getSoundConfig(id).routing, allowInherit: true });
-                if (!result) return; // cancelled -> keep previous
-                await setSoundConfig(id, { routing: result.v });
-                refresh();
-            });
-        });
-
-        // Volume pre-set slider: persist the per-sound default (debounced).
-        // Slider value is a position on the perceptual curve -> map to gain.
-        rootElement.querySelectorAll('.sb-preset-volume').forEach(slider => {
-            slider.addEventListener('input', (ev) => {
-                const id = ev.currentTarget.dataset.id;
-                const volume = foundry.audio.AudioHelper.inputToVolume(ev.currentTarget.value);
-                debouncedPersistConfig(id, volume);
-            });
-        });
-
-        // Tags: edit per sound inside the gear panel. Add via Enter, remove via the
-        // chip's ×. Both update the chips IN PLACE, persist, and keep the node's
-        // data-tags in sync so the search filter sees changes without a render.
-        rootElement.querySelectorAll('.sb-tags-row').forEach(row => {
-            const id = row.dataset.id;
-            const addInput = row.querySelector('.sb-tag-add');
-            const node = row.closest('.sb-sound-tile')?.querySelector('.sb-sound-node');
-            const syncTags = (tags) => { if (node) node.dataset.tags = JSON.stringify(tags); };
-
-            addInput?.addEventListener('keydown', async (ev) => {
-                ev.stopPropagation();
-                if (ev.key !== "Enter") return;
-                ev.preventDefault();
-                // Comma-separated input adds each part as its own tag (so
-                // "blau, grün, rot" -> three tags). Split on commas only — tags may
-                // contain spaces, so whitespace must not split.
-                const parts = ev.currentTarget.value.split(',').map(s => s.trim()).filter(Boolean);
-                ev.currentTarget.value = "";
-                if (!parts.length) return;
-                const tags = getSoundConfig(id).tags;
-                let added = false;
-                for (const part of parts) {
-                    // Dedupe against existing AND already-added-in-this-batch tags
-                    // (the running push makes the check see earlier parts too).
-                    if (tags.some(t => t.toLowerCase() === part.toLowerCase())) continue;
-                    tags.push(part);
-                    added = true;
-                    const chip = document.createElement('span');
-                    chip.className = 'sb-tag-chip';
-                    chip.dataset.tag = part;
-                    chip.innerHTML = `#${escapeHtml(part)} <i class="sb-tag-remove fas fa-times" title="${escapeHtml(game.i18n.localize("SOUNDBRETT.RemoveTag"))}"></i>`;
-                    row.insertBefore(chip, addInput);
-                }
-                if (!added) return;
-                await setSoundConfig(id, { tags });
-                syncTags(tags);
-            });
-
-            // Delegated so dynamically added chips work without re-wiring.
-            row.addEventListener('click', async (ev) => {
-                const remove = ev.target.closest('.sb-tag-remove');
-                if (!remove) return;
-                ev.preventDefault();
-                ev.stopPropagation();
-                const chip = remove.closest('.sb-tag-chip');
-                const tag = chip.dataset.tag;
-                const tags = getSoundConfig(id).tags.filter(t => t.toLowerCase() !== tag.toLowerCase());
-                await setSoundConfig(id, { tags });
-                chip.remove();
-                syncTags(tags);
-            });
-        });
-
-        rootElement.querySelectorAll('.track-stop').forEach(btn => {
-            btn.addEventListener('click', (ev) => {
-                stopSound(ev.currentTarget.dataset.id);
-            });
-        });
-
-        rootElement.querySelectorAll('.track-pause').forEach(btn => {
-            btn.addEventListener('click', (ev) => {
-                const id = ev.currentTarget.dataset.id;
-                const track = activeSounds[id];
-                if (!track || !track.soundInstance) return;
-
-                const s = track.soundInstance;
-                if (track.isPaused) {
-                    // play() resets volume/loop -> save first, restore afterwards
-                    const vol = s.volume;
-                    if (!s.playing && typeof s.play === "function") s.play();
-                    s.volume = vol;
-                    s.loop = track.isLooping;
-                    track.isPaused = false;
-                    // Shift the virtual start by the pause duration so elapsed
-                    // wall-clock time equals the playback position again
-                    // (position sync, see playFromState).
-                    track.startedAt = Date.now() - (track.pausedPosition ?? 0) * 1000;
-                    delete track.pausedPosition;
-                    game.socket.emit('module.soundbrett', { action: "resume", id });
-                } else {
-                    // Remember WHERE we pause (persisted; restore/reconcile resume
-                    // there). Read the instance clock while it is still playing,
-                    // fall back to the virtual-start math.
-                    const pos = Number.isFinite(s.currentTime)
-                        ? s.currentTime
-                        : track.startedAt ? (Date.now() - track.startedAt) / 1000 : 0;
-                    track.pausedPosition = Math.max(0, pos);
-                    // safePause: a click within the STARTING window (right after
-                    // play) must defer the pause, not crash or skip it.
-                    safePause(s);
-                    track.isPaused = true;
-                    game.socket.emit('module.soundbrett', { action: "pause", id });
-                }
-                persistActiveState();
-                this.render();
-            });
-        });
-
-        rootElement.querySelectorAll('.track-loop').forEach(btn => {
-            btn.addEventListener('click', (ev) => {
-                const id = ev.currentTarget.dataset.id;
-                const track = activeSounds[id];
-                if (!track || !track.soundInstance) return;
-
-                track.isLooping = !track.isLooping;
-                track.soundInstance.loop = track.isLooping;
-                game.socket.emit('module.soundbrett', { action: "loop", id, loop: track.isLooping });
-                // Feed the change back into the durable per-sound default.
-                setSoundConfig(id, { loop: track.isLooping });
-                persistActiveState();
-                this.render();
-            });
-        });
-
-        rootElement.querySelectorAll('.track-volume-slider').forEach(slider => {
-            slider.addEventListener('input', (ev) => {
-                const id = ev.currentTarget.dataset.id;
-                // Perceptual curve: slider position -> real gain. Everything
-                // downstream (instance gain, activeState, socket, per-sound
-                // default) keeps working in gain.
-                const volume = foundry.audio.AudioHelper.inputToVolume(ev.currentTarget.value);
-                const track = activeSounds[id];
-                if (track && track.soundInstance) {
-                    track.soundInstance.volume = volume;
-                    track.volume = volume; // keep the intended volume in sync (persisted)
-                    throttledVolumeEmit(id, volume);
-                    debouncedPersist();
-                    // Feed the change back into the durable per-sound default.
-                    debouncedPersistConfig(id, volume);
-                }
-            });
+    // Syncs the tiles' playing indicator (accent border + glyph) with
+    // activeSounds. Needed because play/stop/pause re-render ONLY the "active"
+    // part (see refreshBoard) — the library part, where the tiles live, keeps
+    // its DOM and must be updated in place.
+    syncTileIndicators() {
+        if (!game.user?.isGM) return;
+        const activeSounds = globalThis.soundbrett.activeSounds;
+        this.element?.querySelectorAll('.sb-sound-node').forEach(node => {
+            const track = activeSounds[node.dataset.id];
+            node.classList.toggle('sb-node-active', !!track);
+            let icon = node.querySelector('.sb-playing-icon');
+            if (!track) { icon?.remove(); return; }
+            if (!icon) {
+                icon = document.createElement('i');
+                node.prepend(icon);
+            }
+            icon.className = `sb-playing-icon fas ${track.isPaused ? 'fa-pause' : 'fa-volume-high'}`;
         });
     }
+
+    // Active panel collapse: hide just the track list (keep the header row) so a
+    // long list can't fill the fixed zone and bury the library. State lives on
+    // the instance (_activeCollapsed) so it survives the frequent re-renders.
+    _applyActiveCollapsed() {
+        const container = this.element?.querySelector('.sb-active-container');
+        const list = container?.querySelector('.sb-active-list');
+        const chevron = container?.querySelector('.sb-active-collapse');
+        if (!list || !chevron) return;
+        const collapsed = !!this._activeCollapsed;
+        list.style.display = collapsed ? 'none' : '';
+        // The track count in the header (.sb-active-count) shows only while
+        // collapsed — the class gates its CSS display.
+        container.classList.toggle('sb-collapsed', collapsed);
+        chevron.classList.toggle('fa-chevron-right', collapsed);
+        chevron.classList.toggle('fa-chevron-down', !collapsed);
+    }
+
+    // The volume SOCKET emit is throttled (trailing): at most one packet per id
+    // per 100ms, always ending on the final value — players track the drag
+    // near-live without dozens of broadcasts per second. (A debounce would go
+    // silent for the whole drag; a throttle keeps updating.)
+    _throttledVolumeEmit(id, volume) {
+        const p = this._pendingVolumeEmits[id] ??= { timer: null, volume };
+        p.volume = volume;
+        if (p.timer) return;
+        p.timer = setTimeout(() => {
+            p.timer = null;
+            game.socket.emit('module.soundbrett', { action: "volume", id, volume: p.volume });
+        }, 100);
+    }
+
+    _anyFolderOpen() {
+        return [...this.element.querySelectorAll('.sb-grid')].some(g => g.style.display !== 'none');
+    }
+
+    // State-based chevron: expanded folders -> down arrow, all collapsed -> up
+    // arrow (per user preference; the arrow shows the current state).
+    _refreshToggleAllIcon() {
+        const icon = this.element?.querySelector('.sb-toggle-all i');
+        if (icon) icon.className = this._anyFolderOpen()
+            ? 'fas fa-angle-double-down' // something open (expanded)
+            : 'fas fa-angle-double-up';  // all collapsed
+    }
+
+    // Expand/collapse ALL folders (incl. Favorites) at once. Same in-place DOM
+    // toggle as a single header, but writes folderState only once.
+    async _setAllFolders(collapsed) {
+        const folderState = foundry.utils.deepClone(game.settings.get('soundbrett', 'folderState') ?? {});
+        this.element.querySelectorAll('.sb-folder-header').forEach(header => {
+            header.nextElementSibling.style.display = collapsed ? "none" : "grid";
+            header.querySelector('.toggle-icon').className = collapsed
+                ? "fas fa-chevron-right toggle-icon"
+                : "fas fa-chevron-down toggle-icon";
+            folderState[header.dataset.category] = collapsed;
+        });
+        await game.settings.set('soundbrett', 'folderState', folderState);
+    }
+
+    // Reads a tile's tag list (stored as JSON on the sound node).
+    _tileTags(node) {
+        try { return JSON.parse(node?.dataset.tags || '[]'); } catch (e) { return []; }
+    }
+
+    // Shows the given tags as read-only chips under a tile (or clears them).
+    _setMatchChips(tile, hitTags) {
+        const box = tile.querySelector('.sb-tile-match-tags');
+        if (!box) return;
+        if (!hitTags.length) { box.innerHTML = ''; box.style.display = 'none'; return; }
+        box.innerHTML = hitTags.map(t => `<span class="sb-tag-chip sb-tag-chip-static">#${escapeHtml(t)}</span>`).join('');
+        box.style.display = 'flex';
+    }
+
+    // Search / filter: pure in-place DOM filter (no render, no folderState
+    // write): tiles whose name doesn't match are hidden; folders with at least
+    // one match show and auto-expand, folders with none hide entirely. Clearing
+    // restores the remembered collapsed state. The query is kept on the app
+    // instance so it survives a library re-render (favorite/rename) while
+    // searching.
+    _applyFilter(raw) {
+        const rootElement = this.element;
+        const q = (raw ?? '').trim().toLowerCase();
+        this._filterQuery = q;
+        const wrappers = rootElement.querySelectorAll('.sb-category-wrapper');
+        const noResults = rootElement.querySelector('.sb-no-results');
+
+        if (!q) {
+            // Restore each folder to its remembered open/closed state.
+            const folderState = game.settings.get('soundbrett', 'folderState') ?? {};
+            wrappers.forEach(wrapper => {
+                wrapper.style.display = '';
+                const header = wrapper.querySelector('.sb-folder-header');
+                const collapsed = folderState[header.dataset.category] === true;
+                wrapper.querySelector('.sb-grid').style.display = collapsed ? 'none' : 'grid';
+                header.querySelector('.toggle-icon').className = collapsed
+                    ? 'fas fa-chevron-right toggle-icon'
+                    : 'fas fa-chevron-down toggle-icon';
+                wrapper.querySelectorAll('.sb-sound-tile').forEach(t => {
+                    t.style.display = '';
+                    this._setMatchChips(t, []); // hide match chips when not searching
+                });
+            });
+            if (noResults) noResults.style.display = 'none';
+            return;
+        }
+
+        // Whitespace-split the query into terms; a tile matches if ANY term
+        // matches (OR across terms). So "green blue" keeps both a "blue"-tagged
+        // and a "green"-tagged sound — each term finds its own sounds, the union
+        // stays visible. Tags may contain spaces, so a tile's tags are NOT
+        // split — only the query is.
+        const terms = q.split(/\s+/).filter(Boolean);
+        let anyVisible = false;
+        wrappers.forEach(wrapper => {
+            let matches = 0;
+            wrapper.querySelectorAll('.sb-sound-tile').forEach(tile => {
+                const node = tile.querySelector('.sb-sound-node');
+                // Match the display name, the original file name (so a renamed
+                // sound stays findable by its old name) and the tags. When a tag
+                // is what matched (any term), show it as a chip under the tile.
+                const name = (node?.dataset.name ?? '').toLowerCase();
+                const file = (node?.dataset.filename ?? '').toLowerCase();
+                const tagHits = this._tileTags(node).filter(t => {
+                    const tl = t.toLowerCase();
+                    return terms.some(term => tl.includes(term));
+                });
+                const textHit = terms.some(term => name.includes(term) || file.includes(term));
+                const hit = textHit || tagHits.length > 0;
+                tile.style.display = hit ? '' : 'none';
+                this._setMatchChips(tile, hit ? tagHits : []);
+                if (hit) matches++;
+            });
+            if (matches > 0) {
+                wrapper.style.display = '';
+                wrapper.querySelector('.sb-grid').style.display = 'grid'; // auto-expand
+                wrapper.querySelector('.toggle-icon').className = 'fas fa-chevron-down toggle-icon';
+                anyVisible = true;
+            } else {
+                wrapper.style.display = 'none';
+            }
+        });
+        if (noResults) noResults.style.display = anyVisible ? 'none' : 'block';
+    }
+
+    // Keeps a node's data-tags (JSON list) in sync after inline tag edits, so
+    // the search filter sees changes without a render.
+    _syncTileTags(row, tags) {
+        const node = row.closest('.sb-sound-tile')?.querySelector('.sb-sound-node');
+        if (node) node.dataset.tags = JSON.stringify(tags);
+    }
+
+    // Tag input inside the gear panel: Enter adds. Comma-separated input adds
+    // each part as its own tag (so "blau, grün, rot" -> three tags). Split on
+    // commas only — tags may contain spaces, so whitespace must not split.
+    // Chips are added IN PLACE (their × carries data-action="removeTag").
+    async _onTagAddKeydown(ev, input) {
+        ev.stopPropagation();
+        if (ev.key !== "Enter") return;
+        ev.preventDefault();
+        const row = input.closest('.sb-tags-row');
+        const id = row?.dataset.id;
+        if (!id) return;
+        const parts = input.value.split(',').map(s => s.trim()).filter(Boolean);
+        input.value = "";
+        if (!parts.length) return;
+        const tags = getSoundConfig(id).tags;
+        let added = false;
+        for (const part of parts) {
+            // Dedupe against existing AND already-added-in-this-batch tags
+            // (the running push makes the check see earlier parts too).
+            if (tags.some(t => t.toLowerCase() === part.toLowerCase())) continue;
+            tags.push(part);
+            added = true;
+            const chip = document.createElement('span');
+            chip.className = 'sb-tag-chip';
+            chip.dataset.tag = part;
+            chip.innerHTML = `#${escapeHtml(part)} <i class="sb-tag-remove fas fa-times" data-action="removeTag" title="${escapeHtml(game.i18n.localize("SOUNDBRETT.RemoveTag"))}"></i>`;
+            row.insertBefore(chip, input);
+        }
+        if (!added) return;
+        await setSoundConfig(id, { tags });
+        this._syncTileTags(row, tags);
+    }
+
+    /* ----------------------------------------------------------------------
+       Action handlers (DEFAULT_OPTIONS.actions). Static per AppV2 convention,
+       but invoked with `this` bound to the app instance; `target` is the
+       [data-action] element (the innermost one — nested actions don't bubble
+       into each other, e.g. preloadFavorites inside the folder header).
+       ---------------------------------------------------------------------- */
+
+    static #onCollapseActive() {
+        this._activeCollapsed = !this._activeCollapsed;
+        this._applyActiveCollapsed();
+    }
+
+    static #onStopAll() {
+        stopAllSounds();
+    }
+
+    static #onTrackPause(event, target) {
+        const id = target.dataset.id;
+        const track = globalThis.soundbrett.activeSounds[id];
+        if (!track || !track.soundInstance) return;
+
+        const s = track.soundInstance;
+        if (track.isPaused) {
+            // play() resets volume/loop -> save first, restore afterwards
+            const vol = s.volume;
+            if (!s.playing && typeof s.play === "function") s.play();
+            s.volume = vol;
+            s.loop = track.isLooping;
+            track.isPaused = false;
+            // Shift the virtual start by the pause duration so elapsed
+            // wall-clock time equals the playback position again
+            // (position sync, see playFromState).
+            track.startedAt = Date.now() - (track.pausedPosition ?? 0) * 1000;
+            delete track.pausedPosition;
+            game.socket.emit('module.soundbrett', { action: "resume", id });
+        } else {
+            // Remember WHERE we pause (persisted; restore/reconcile resume
+            // there). Read the instance clock while it is still playing,
+            // fall back to the virtual-start math.
+            const pos = Number.isFinite(s.currentTime)
+                ? s.currentTime
+                : track.startedAt ? (Date.now() - track.startedAt) / 1000 : 0;
+            track.pausedPosition = Math.max(0, pos);
+            // safePause: a click within the STARTING window (right after
+            // play) must defer the pause, not crash or skip it.
+            safePause(s);
+            track.isPaused = true;
+            game.socket.emit('module.soundbrett', { action: "pause", id });
+        }
+        persistActiveState();
+        refreshBoard(); // re-renders the active part + syncs the tile glyph
+    }
+
+    static #onTrackLoop(event, target) {
+        const id = target.dataset.id;
+        const track = globalThis.soundbrett.activeSounds[id];
+        if (!track || !track.soundInstance) return;
+        track.isLooping = !track.isLooping;
+        track.soundInstance.loop = track.isLooping;
+        game.socket.emit('module.soundbrett', { action: "loop", id, loop: track.isLooping });
+        // Feed the change back into the durable per-sound default.
+        setSoundConfig(id, { loop: track.isLooping });
+        persistActiveState();
+        refreshBoard();
+    }
+
+    static #onTrackStop(event, target) {
+        stopSound(target.dataset.id);
+    }
+
+    static #onToggleFolder(event, target) {
+        const content = target.nextElementSibling;
+        const icon = target.querySelector('.toggle-icon');
+        // Visible (display !== "none") -> will be collapsed now
+        const willCollapse = content.style.display !== "none";
+        content.style.display = willCollapse ? "none" : "grid";
+        icon.className = willCollapse
+            ? "fas fa-chevron-right toggle-icon"
+            : "fas fa-chevron-down toggle-icon";
+
+        // Remember the state per user so it survives re-renders and reloads
+        const folderState = foundry.utils.deepClone(game.settings.get('soundbrett', 'folderState') ?? {});
+        folderState[target.dataset.category] = willCollapse;
+        game.settings.set('soundbrett', 'folderState', folderState);
+        this._refreshToggleAllIcon();
+    }
+
+    static async #onToggleAllFolders() {
+        // Collapse all if anything is open, otherwise expand all.
+        await this._setAllFolders(this._anyFolderOpen());
+        this._refreshToggleAllIcon();
+    }
+
+    // Rescan the sound folder on demand: the folder scan is cached (see
+    // _prepareContext), so new/removed files only show up after this.
+    static #onRefreshLibrary() {
+        this._libraryCache = null;
+        this.render({ parts: ["library"] });
+    }
+
+    // Preload ALL favorites at once: warm every tile in the Favorites group's
+    // grid (reuses the per-sound preloadSound). Shows a spinner while the GM's
+    // own loads run, then a check (all ok) or warning (any failed).
+    static async #onPreloadFavorites(event, target) {
+        event.preventDefault();
+        const icon = target;
+        if (icon.classList.contains('fa-spinner')) return; // already running
+        const wrapper = icon.closest('.sb-category-wrapper');
+        const nodes = Array.from(wrapper?.querySelectorAll('.sb-sound-node') ?? []);
+        if (!nodes.length) return;
+        const restore = icon.className;
+        icon.className = 'sb-preload-favs fas fa-spinner fa-spin';
+        const results = await Promise.all(nodes.map(n =>
+            preloadSound({ path: n.dataset.path, name: n.dataset.name })));
+        icon.className = results.every(Boolean)
+            ? 'sb-preload-favs fas fa-check'
+            : 'sb-preload-favs fas fa-triangle-exclamation';
+        setTimeout(() => { icon.className = restore; }, 1500);
+    }
+
+    // Board-wide routing default: a click on the toolbar chip opens the unified
+    // routing picker. Does NOT affect already running tracks and does NOT
+    // re-render; only the label + tooltip update in place.
+    static async #onRouteBoard() {
+        const result = await promptRouting({ current: getBoardRouting(), allowInherit: false });
+        if (!result) return; // cancelled -> keep previous
+        await game.settings.set('soundbrett', 'routingDefault', result.v ?? { mode: 'all' });
+        const r = getBoardRouting();
+        const label = this.element?.querySelector('.sb-routing-label');
+        const btn = this.element?.querySelector('.sb-routing-text');
+        if (label) label.textContent = routingLabel(r);
+        if (btn) btn.title = routingPlayerNames(r) || game.i18n.localize("SOUNDBRETT.RoutingTargetHint");
+    }
+
+    // Click (re)starts the sound with its persisted per-sound defaults.
+    static #onPlayTile(event, target) {
+        event.preventDefault();
+        playSound({ id: target.dataset.id, path: target.dataset.path, name: target.dataset.name });
+    }
+
+    // Favorite toggle: flip the icon immediately for feedback, persist, then
+    // re-render the library so the synthetic "Favorites" group gains/loses
+    // this sound (the active part is unaffected by favorites).
+    static async #onToggleFavorite(event, target) {
+        event.preventDefault();
+        const id = target.dataset.id;
+        const isFavorite = !target.classList.contains('active');
+        target.classList.toggle('active', isFavorite);
+        await setSoundConfig(id, { favorite: isFavorite });
+        this.render({ parts: ["library"] });
+    }
+
+    // Gear: toggle the per-tile settings panel (loop + rename + preload +
+    // volume + routing + tags). The open state is tracked per sound id on the
+    // instance so it SURVIVES a library re-render.
+    static #onToggleGear(event, target) {
+        event.preventDefault();
+        const tile = target.closest('.sb-sound-tile');
+        const id = tile?.dataset.id;
+        const panel = tile?.querySelector('.sb-tile-settings');
+        if (!panel || !id) return;
+        const open = panel.style.display === "none";
+        panel.style.display = open ? "flex" : "none";
+        if (open) this._openGears.add(id); else this._openGears.delete(id);
+    }
+
+    // Loop pre-set: persist the default for the NEXT start (does not touch a
+    // currently playing instance — that is what the Active Playback loop is for).
+    static #onPresetLoop(event, target) {
+        event.preventDefault();
+        const loop = !target.classList.contains('active');
+        target.classList.toggle('active', loop);
+        setSoundConfig(target.dataset.id, { loop });
+    }
+
+    // Rename: open a small dialog to set a custom display name. Empty input
+    // (or the file name itself) clears the override, reverting to the file name.
+    // Persisting changes structure (Favorites order, search index) -> re-render
+    // the library part.
+    static async #onRenameSound(event, target) {
+        event.preventDefault();
+        const node = target.closest('.sb-sound-tile')?.querySelector('.sb-sound-node');
+        if (!node) return;
+        const id = node.dataset.id;
+        const fileName = node.dataset.filename;
+        const current = node.dataset.name; // effective display name (custom or file name)
+
+        let result;
+        try {
+            result = await foundry.applications.api.DialogV2.prompt({
+                window: { title: game.i18n.localize("SOUNDBRETT.RenameTitle") },
+                content: `<p>${escapeHtml(game.i18n.localize("SOUNDBRETT.RenameHint"))}</p>`
+                    + `<input type="text" name="sbname" value="${escapeHtml(current)}" placeholder="${escapeHtml(fileName)}" style="width:100%;" autofocus>`,
+                ok: {
+                    label: game.i18n.localize("SOUNDBRETT.RenameSave"),
+                    callback: (event, button) => button.form.elements.sbname.value
+                },
+                rejectClose: false
+            });
+        } catch (e) { return; } // dialog dismissed
+        if (result === null || result === undefined) return;
+
+        const clean = result.trim();
+        await setSoundConfig(id, { name: clean === fileName ? "" : clean });
+        this.render({ parts: ["library"] });
+    }
+
+    // Preload: warm the buffer at all players (and locally) so the next start
+    // is instant and in sync. The button shows a spinner while the GM's own
+    // load runs and a check/warning afterwards (a proxy — players differ).
+    static async #onPreloadTile(event, target) {
+        event.preventDefault();
+        if (target.disabled) return;
+        const node = target.closest('.sb-sound-tile')?.querySelector('.sb-sound-node');
+        if (!node) return;
+        const icon = target.querySelector('i');
+        const restore = icon.className;
+        icon.className = 'fas fa-spinner fa-spin';
+        target.disabled = true;
+        const ok = await preloadSound({ path: node.dataset.path, name: node.dataset.name });
+        icon.className = ok ? 'fas fa-check' : 'fas fa-triangle-exclamation';
+        setTimeout(() => { icon.className = restore; target.disabled = false; }, 1500);
+    }
+
+    // Per-sound routing override: the clickable text opens the unified picker
+    // (incl. "Default (board)" = inherit). Persists into soundSettings.routing
+    // (null = inherit). Updates label + tooltip IN PLACE, no re-render.
+    static async #onRouteSound(event, target) {
+        event.preventDefault();
+        const row = target.closest('.sb-route-row');
+        const id = row?.dataset.id;
+        if (!id) return;
+        const result = await promptRouting({ current: getSoundConfig(id).routing, allowInherit: true });
+        if (!result) return; // cancelled -> keep previous
+        await setSoundConfig(id, { routing: result.v });
+        const cfg = getSoundConfig(id);
+        const label = row.querySelector('.sb-route-label');
+        if (label) label.textContent = cfg.routing
+            ? routingLabel(cfg.routing)
+            : game.i18n.localize("SOUNDBRETT.RoutingInherit");
+        target.title = (cfg.routing ? routingPlayerNames(cfg.routing) : "")
+            || game.i18n.localize("SOUNDBRETT.RoutingTargetHint");
+    }
+
+    // Remove a tag chip (the × inside it; also on chips added in place).
+    static async #onRemoveTag(event, target) {
+        event.preventDefault();
+        const chip = target.closest('.sb-tag-chip');
+        const row = target.closest('.sb-tags-row');
+        const id = row?.dataset.id;
+        if (!chip || !id) return;
+        const tag = chip.dataset.tag;
+        const tags = getSoundConfig(id).tags.filter(t => t.toLowerCase() !== tag.toLowerCase());
+        await setSoundConfig(id, { tags });
+        chip.remove();
+        this._syncTileTags(row, tags);
+    }
+
 }
