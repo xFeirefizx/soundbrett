@@ -2,7 +2,7 @@
   "id": "soundbrett",
   "title": "Soundbrett",
   "description": "A GM soundboard for Foundry VTT — play folder-organized audio in sync to your players, or just the ones you choose, with persistent per-sound settings, search & tagging, and switchable themes.",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "socket": true,
   "compatibility": {
     "minimum": "14",
