@@ -1,7 +1,10 @@
 # Packages a clean module zip and attaches module.json + module.zip to a GitHub
-# Release. To cut a release: bump "version" in module.json, commit, then push a
-# tag "v<version>" (e.g. v1.2.0) — this workflow creates the release and uploads
-# the assets. Foundry installs/updates via the manifest URL, which points at the
+# Release. To cut a release: bump "version" in module.json, add a matching
+# "## [<version>]" section to CHANGELOG.md, commit, then push a tag "v<version>"
+# (e.g. v1.2.0) — this workflow creates the release (its notes are the
+# changelog section) and uploads the assets. A missing changelog section FAILS
+# the job on purpose, before the release exists — add the section and re-push
+# the tag. Foundry installs/updates via the manifest URL, which points at the
 # latest release's module.json.
 name: Release
 
@@ -40,13 +43,25 @@ jobs:
       - name: Create module zip
         run: zip module.zip module.json main.js style.css templates/active.html templates/library.html LICENSE README.md lang/en.json lang/de.json
 
+      # Release notes = this version's CHANGELOG.md section (everything between
+      # "## [<version>]" and the next "## " heading). No section -> fail here,
+      # BEFORE the release exists, so re-tagging after adding it is harmless.
+      - name: Extract release notes from CHANGELOG.md
+        run: |
+          awk -v ver="${{ steps.version.outputs.version }}" '
+            index($0, "## [" ver "]") == 1 { found = 1; next }
+            found && /^## /                { exit }
+            found                          { print }
+          ' CHANGELOG.md > release-notes.md
+          if ! grep -q '[^[:space:]]' release-notes.md; then
+            echo "::error::CHANGELOG.md has no section for version ${{ steps.version.outputs.version }} — add '## [${{ steps.version.outputs.version }}]' and re-push the tag."
+            exit 1
+          fi
+
       - name: Create release and attach assets
         uses: softprops/action-gh-release@v2
         with:
-          body: |
-            A GM soundboard for Foundry VTT: play audio from a configurable folder (subfolders become categories), in sync to your players.
-            Central controls (pause/resume, stop, loop, volume), persistent per-sound settings, favorites, search and tagging — and you choose who hears each sound.
-            Switchable themes (neutral, arcane, WFRP) and English/German localization.
+          body_path: release-notes.md
           files: |
             module.json
             module.zip
