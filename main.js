@@ -142,6 +142,69 @@ async function setSoundConfig(id, partial) {
     await game.settings.set('soundbrett', 'soundSettings', all);
 }
 
+// Clears the whole world-scope 'soundSettings' store — every sound falls back
+// to DEFAULT_SOUND_CONFIG (no favorites, default volume/loop, file names as
+// display names, no tags, board routing). Triggered from the settings-menu
+// reset dialog. activeState is deliberately untouched: running tracks keep
+// playing exactly as they were started. A full re-render of an open board
+// refreshes names, favorites group and preset panels in one go.
+async function resetSoundSettings() {
+    if (!game.user?.isGM) return;
+    await game.settings.set('soundbrett', 'soundSettings', {});
+    ui.notifications?.info(game.i18n.localize("SOUNDBRETT.ResetDone"));
+    if (ui.soundbrettApp?.rendered) ui.soundbrettApp.render(true);
+}
+
+// Prunes orphaned entries from the two per-sound/per-folder stores; called
+// after a COMPLETE library scan (callers must skip partial scans — a folder
+// that failed to browse would make its files look deleted). Both stores
+// otherwise collect leftovers when files move or folders are renamed.
+// soundSettings: the sound id is reversible (btoa(encodeURIComponent(path))),
+// so an entry is dropped only when its decoded path lies UNDER the scanned
+// directory but the file is gone — settings belonging to a different sound
+// directory are kept, switching soundDirectory back and forth never loses
+// configs. folderState is keyed by the LOCALIZED category name; valid keys are
+// the current categories plus the Favorites group (whose collapsed state
+// should survive phases without favorites). Writes are fire-and-forget — no
+// consumer caches either store, and nothing reacts to their updateSetting.
+function pruneStores(dirPath, files) {
+    if (!game.user?.isGM) return;
+    const norm = s => { try { return decodeURIComponent(s); } catch (e) { return s; } };
+
+    const validIds = new Set();
+    for (const paths of Object.values(files)) {
+        for (const f of paths) validIds.add(soundIdFromPath(f));
+    }
+    const dirPrefix = norm(dirPath).replace(/\/+$/, "") + "/";
+    const all = game.settings.get('soundbrett', 'soundSettings') ?? {};
+    const kept = {};
+    let dropped = 0;
+    for (const [id, cfg] of Object.entries(all)) {
+        let keep = true;
+        if (!validIds.has(id)) {
+            let path = null;
+            try { path = decodeURIComponent(atob(id)); } catch (e) { /* foreign key — keep it */ }
+            if (path !== null && norm(path).startsWith(dirPrefix)) keep = false;
+        }
+        if (keep) kept[id] = cfg;
+        else dropped++;
+    }
+    if (dropped > 0) {
+        console.log(`Soundbrett | Pruned ${dropped} orphaned sound setting entr${dropped === 1 ? "y" : "ies"}.`);
+        game.settings.set('soundbrett', 'soundSettings', kept);
+    }
+
+    const favLabel = game.i18n.localize("SOUNDBRETT.Favorites");
+    const validFolders = new Set([...Object.keys(files), favLabel]);
+    const folderState = game.settings.get('soundbrett', 'folderState') ?? {};
+    const stale = Object.keys(folderState).filter(k => !validFolders.has(k));
+    if (stale.length > 0) {
+        const cleaned = { ...folderState };
+        for (const k of stale) delete cleaned[k];
+        game.settings.set('soundbrett', 'folderState', cleaned);
+    }
+}
+
 // --- Audio state persistence ----------------------------------------------
 // The world-scope setting 'activeState' is the shared single source of truth.
 // It holds serializable data only (never a live Sound instance!).
@@ -180,6 +243,45 @@ function serializeActiveSounds() {
 async function persistActiveState() {
     if (!game.user?.isGM) return;
     await game.settings.set('soundbrett', 'activeState', serializeActiveSounds());
+}
+
+// --- Progress display (GM-side) ---------------------------------------------
+// The active rows show elapsed time / duration, updated by a timer tick that
+// touches only textContent (never a render). All of it rides on the position
+// sync that already exists for reconcile/restore (startedAt/pausedPosition).
+
+// Seconds -> "m:ss" (or "h:mm:ss" from an hour up).
+function formatTime(sec) {
+    if (!Number.isFinite(sec) || sec < 0) sec = 0;
+    sec = Math.floor(sec);
+    const s = sec % 60;
+    const m = Math.floor(sec / 60) % 60;
+    const h = Math.floor(sec / 3600);
+    const mm = String(m).padStart(2, "0"), ss = String(s).padStart(2, "0");
+    return h > 0 ? `${h}:${mm}:${ss}` : `${m}:${ss}`;
+}
+
+// Current playback position (seconds) of a GM-side activeSounds entry. Paused
+// tracks sit at their stored pausedPosition. Playing tracks prefer the
+// instance clock (exact, offset-aware); while the instance is still STARTING
+// (currentTime not finite yet) the virtual-start math fills in. Loops wrap
+// into the cycle so the display matches what is audible.
+function trackPosition(track) {
+    if (track.isPaused) return Math.max(0, track.pausedPosition ?? 0);
+    const s = track.soundInstance;
+    let pos = (s && Number.isFinite(s.currentTime)) ? s.currentTime
+        : track.startedAt ? (Date.now() - track.startedAt) / 1000 : 0;
+    const dur = s?.duration;
+    if (track.isLooping && Number.isFinite(dur) && dur > 0) pos = pos % dur;
+    return Math.max(0, pos);
+}
+
+// "1:23 / 3:45" — duration part only when known (streaming MP3s can report a
+// non-finite duration; then the label degrades to just the elapsed time).
+function trackTimeLabel(track) {
+    const dur = track.soundInstance?.duration;
+    const hasDur = Number.isFinite(dur) && dur > 0;
+    return formatTime(trackPosition(track)) + (hasDur ? ` / ${formatTime(dur)}` : "");
 }
 
 // Pauses a Sound without tripping Foundry's state guard. Sound#pause throws
@@ -685,6 +787,31 @@ function getActiveTheme() {
     return theme;
 }
 
+// Confirmation dialog behind the settings-menu button "Reset sound settings".
+// registerMenu needs an ApplicationV2 class it can construct and render(true);
+// DialogV2 fits — the confirm/cancel logic lives in its buttons (labels and
+// window.title are i18n keys, DialogV2 localizes them itself). The content is
+// built at construction time, which is fine: the menu opens long after i18n
+// is ready, and the settings count is current for each open.
+class ResetSoundSettingsDialog extends foundry.applications.api.DialogV2 {
+    constructor(options = {}) {
+        const count = Object.keys(game.settings.get('soundbrett', 'soundSettings') ?? {}).length;
+        super(foundry.utils.mergeObject({
+            window: { title: "SOUNDBRETT.ResetDialogTitle", icon: "fas fa-rotate-left" },
+            content: `<p>${escapeHtml(game.i18n.format("SOUNDBRETT.ResetDialogContent", { count }))}</p>`,
+            buttons: [
+                {
+                    action: "reset",
+                    label: "SOUNDBRETT.ResetConfirm",
+                    icon: "fas fa-rotate-left",
+                    callback: () => resetSoundSettings()
+                },
+                { action: "cancel", label: "SOUNDBRETT.ResetCancel", icon: "fas fa-times", default: true }
+            ]
+        }, options));
+    }
+}
+
 Hooks.once('init', () => {
     // Settings name/hint/choices are passed as BARE i18n keys: 'init' fires
     // before 'i18nInit', so module translations aren't guaranteed here — the
@@ -733,6 +860,18 @@ Hooks.once('init', () => {
         config: false,
         type: Object,
         default: {}
+    });
+
+    // Settings-menu button: reset ALL per-sound settings in one go (favorites,
+    // volumes, loop presets, custom names, tags, routing overrides). The
+    // DialogV2 subclass carries the confirmation; restricted -> GM-only entry.
+    game.settings.registerMenu('soundbrett', 'resetSoundSettings', {
+        name: "SOUNDBRETT.ResetMenuName",
+        label: "SOUNDBRETT.ResetMenuLabel",
+        hint: "SOUNDBRETT.ResetMenuHint",
+        icon: "fas fa-rotate-left",
+        type: ResetSoundSettingsDialog,
+        restricted: true
     });
 
     // Visual theme (world-scope, purely cosmetic — never changes behaviour).
@@ -927,6 +1066,7 @@ class SoundbrettApp extends HandlebarsApplicationMixin(ApplicationV2) {
         if (!this._libraryCache || this._libraryCache.dir !== mainDirPath) {
             const picker = foundry.applications?.apps?.FilePicker?.implementation || FilePicker;
             const files = {}; // category name -> [file paths]
+            let scanFailed = false; // any folder that failed to browse -> scan is partial
 
             const scanFolder = async (path, categoryName) => {
                 try {
@@ -943,6 +1083,7 @@ class SoundbrettApp extends HandlebarsApplicationMixin(ApplicationV2) {
                         await scanFolder(subDir, nextCategoryName);
                     }
                 } catch (err) {
+                    scanFailed = true;
                     console.warn(`Soundbrett | Error scanning ${path}:`, err);
                 }
             };
@@ -951,7 +1092,13 @@ class SoundbrettApp extends HandlebarsApplicationMixin(ApplicationV2) {
             // Don't cache an EMPTY scan: with no sounds the toolbar (and its
             // refresh button) isn't rendered, so an empty result would be stuck
             // until reopen. Rescanning an empty dir is cheap anyway.
-            if (Object.keys(files).length > 0) this._libraryCache = { dir: mainDirPath, files };
+            if (Object.keys(files).length > 0) {
+                this._libraryCache = { dir: mainDirPath, files };
+                // Clean out store entries whose file/folder no longer exists —
+                // only on a COMPLETE scan (a failed browse would make its files
+                // look deleted and prune their settings by mistake).
+                if (!scanFailed) pruneStores(mainDirPath, files);
+            }
             else { this._libraryCache = null; uncachedFiles = files; }
         }
         const libraryFiles = this._libraryCache?.files ?? uncachedFiles ?? {};
@@ -1008,6 +1155,9 @@ class SoundbrettApp extends HandlebarsApplicationMixin(ApplicationV2) {
                 volumeInput: foundry.audio.AudioHelper.volumeToInput(s.volume ?? 0.8),
                 isLooping: s.isLooping,
                 isPaused: s.isPaused,
+                // Initial progress label ("1:23 / 3:45"); the timer tick keeps
+                // it current in place afterwards (see _tickProgress).
+                timeLabel: trackTimeLabel(s),
                 // Visual feedback when a track is routed to only some players (or
                 // only the GM): the active row shows a target badge with this label.
                 isCustomTarget: recipients.mode === "custom",
@@ -1080,6 +1230,11 @@ class SoundbrettApp extends HandlebarsApplicationMixin(ApplicationV2) {
         // Players need no listeners — the app should not be open for them at all.
         if (!game.user.isGM) return;
         const root = this.element;
+
+        // Progress tick for the active rows: updates the time labels in place
+        // (textContent only, never a render). Runs while the window is open;
+        // _onClose clears it, so ??= re-creates it on the next open.
+        this._progressTimer ??= setInterval(() => this._tickProgress(), 500);
 
         root.addEventListener('input', (ev) => {
             const t = ev.target;
@@ -1190,9 +1345,34 @@ class SoundbrettApp extends HandlebarsApplicationMixin(ApplicationV2) {
         }
     }
 
+    // Stop the progress tick with the window; the paired ??= in _onFirstRender
+    // starts a fresh one on the next open.
+    _onClose(options) {
+        super._onClose(options);
+        if (this._progressTimer) {
+            clearInterval(this._progressTimer);
+            this._progressTimer = null;
+        }
+    }
+
     /* ----------------------------------------------------------------------
        In-place DOM helpers (no render)
        ---------------------------------------------------------------------- */
+
+    // Progress tick: refresh each active row's time label from the live track
+    // state. Cheap by design — paused rows compute to the same string and are
+    // skipped by the textContent comparison.
+    _tickProgress() {
+        if (!this.rendered) return;
+        const activeSounds = globalThis.soundbrett.activeSounds;
+        this.element?.querySelectorAll('.sb-active-row').forEach(row => {
+            const track = activeSounds[row.dataset.id];
+            const label = row.querySelector('.sb-track-time');
+            if (!track || !label) return;
+            const text = trackTimeLabel(track);
+            if (label.textContent !== text) label.textContent = text;
+        });
+    }
 
     // Syncs the tiles' playing indicator (accent border + glyph) with
     // activeSounds. Needed because play/stop/pause re-render ONLY the "active"

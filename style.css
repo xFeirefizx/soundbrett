@@ -910,6 +910,17 @@
     margin-right: 10px;
 }
 
+/* Elapsed / duration next to the track name; updated in place by the progress
+   tick. tabular-nums keeps the digits from jittering as they count up. */
+.sb-track-time {
+    flex: 0 0 auto;
+    margin-right: 8px;
+    font-size: var(--sb-fs-2xs);
+    color: var(--sb-text-muted);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
 .track-controls {
     display: flex;
     align-items: center;
