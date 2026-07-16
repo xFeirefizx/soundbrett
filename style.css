@@ -470,6 +470,7 @@
 #soundbrett-app .track-controls button,
 #soundbrett-app .sb-preset-loop,
 #soundbrett-app .sb-preset-preload,
+#soundbrett-app .sb-preset-reset,
 #soundbrett-app .sb-rename {
     display: flex;
     align-items: center;
@@ -490,6 +491,7 @@
 #soundbrett-app .track-controls button > i,
 #soundbrett-app .sb-preset-loop > i,
 #soundbrett-app .sb-preset-preload > i,
+#soundbrett-app .sb-preset-reset > i,
 #soundbrett-app .sb-rename > i,
 #soundbrett-app .sb-toggle-all > i,
 #soundbrett-app .sb-refresh > i,
@@ -614,7 +616,10 @@
     opacity: 1;
 }
 
-.sb-fav-toggle.active {
+/* Star: favorited. Gear: the sound has stored gear-panel settings (kept in
+   sync in place by syncGearTint) — same gold, so "customized" reads at a glance. */
+.sb-fav-toggle.active,
+.sb-tile-gear.active {
     color: var(--sb-fav, var(--sb-accent));
     opacity: 1;
 }
@@ -640,6 +645,7 @@
 
 .sb-preset-loop,
 .sb-preset-preload,
+.sb-preset-reset,
 .sb-rename {
     flex: 0 0 auto;
     background: var(--sb-btn-bg);
@@ -653,6 +659,7 @@
 
 .sb-preset-loop:hover,
 .sb-preset-preload:hover,
+.sb-preset-reset:hover,
 .sb-rename:hover {
     color: var(--sb-text-strong);
     border-color: var(--sb-accent);
