@@ -1,0 +1,37 @@
+# Fast sanity checks on every push and pull request to main. They cover what
+# would otherwise only surface while cutting a release — and a release tag
+# cannot be taken back once pushed.
+name: Check
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # module.json + language files are valid JSON, the manifest has its
+      # required fields, every referenced file exists, and every script
+      # listed in the manifest passes "node --check".
+      - name: Validate manifest, language files and script syntax
+        run: node .github/scripts/check-manifest.mjs
+
+      # The release workflow takes its notes from the changelog section of the
+      # released version and fails without one.
+      - name: Changelog has a section for the manifest version
+        run: |
+          version="$(node -p 'require("./module.json").version')"
+          bash .github/scripts/release-notes.sh "$version" > /dev/null
+          echo "CHANGELOG.md has a section for $version"
