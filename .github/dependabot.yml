@@ -1,0 +1,17 @@
+# Keeps the SHA-pinned actions in .github/workflows up to date: once a week
+# Dependabot opens one pull request that bumps the pinned commit SHAs together
+# with their "# vX.Y.Z" version comments.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    # Skip releases younger than a week, so a compromised or broken release
+    # has time to be noticed and pulled before it is proposed here.
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns:
+          - "*"
