@@ -1,67 +1,129 @@
 # Packages a clean module zip and attaches module.json + module.zip to a GitHub
 # Release. To cut a release: bump "version" in module.json, add a matching
-# "## [<version>]" section to CHANGELOG.md, commit, then push a tag "v<version>"
-# (e.g. v1.2.0) — this workflow creates the release (its notes are the
-# changelog section) and uploads the assets. A missing changelog section FAILS
-# the job on purpose, before the release exists — add the section and re-push
-# the tag. Foundry installs/updates via the manifest URL, which points at the
-# latest release's module.json.
+# "## [<version>]" section to CHANGELOG.md, commit, push, wait for the Check
+# workflow to turn green, then push a tag "v<version>" (e.g. v1.2.0) — this
+# workflow creates the release (its notes are the changelog section) and
+# uploads the assets. Foundry installs/updates via the manifest URL, which
+# points at the latest release's module.json.
+#
+# Release tags are protected (a "v*" tag can be neither moved nor deleted), so
+# a tag whose build fails is used up: fix the problem and release the next
+# patch version. Everything that can fail here is therefore also covered by
+# the Check workflow on every push to main.
+#
+# Dry run: start this workflow by hand (Actions tab -> Release -> "Run
+# workflow", or "gh workflow run release.yml"). Only "build" runs then; nothing
+# is published. The files it would release are attached to the run as the
+# "release-assets" artifact for inspection.
+#
+# Two jobs on purpose: "build" runs with a read-only token and produces the
+# files; only "release" may write to the repository, and it runs no repository
+# code — it just publishes the files "build" handed over.
 name: Release
 
 on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Dry run, nothing is published. Version to build, without the leading v (empty = version in module.json)."
+        required: false
+        type: string
 
-permissions:
-  contents: write
+# No permissions by default; each job asks for exactly what it needs.
+permissions: {}
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - name: Derive version from tag
-        id: version
-        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      # Values reach the scripts as environment variables only (never as
+      # inline ${{ }} expressions), so a crafted tag name or input cannot
+      # inject code.
+      - name: Resolve version and tag
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            # Dry run: build as if this version's tag had been pushed.
+            tag="v${INPUT_VERSION:-$(node -p 'require("./module.json").version')}"
+          fi
+          version="${tag#v}"
+          if ! grep -Eq '^[0-9]+(\.[0-9]+)*([-+][0-9A-Za-z.+-]+)?$' <<<"$version"; then
+            echo "::error::'$tag' does not look like a version tag (expected e.g. v1.2.0)."
+            exit 1
+          fi
+          echo "TAG=$tag" >> "$GITHUB_ENV"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
 
       # Rewrite the released manifest so version + URLs match this exact release:
       # download points at this tag's asset, manifest stays on "latest" so Foundry
       # detects future updates.
-      - name: Substitute manifest values
-        uses: microsoft/variable-substitution@v1
-        with:
-          files: module.json
-        env:
-          version: ${{ steps.version.outputs.version }}
-          url: https://github.com/${{ github.repository }}
-          manifest: https://github.com/${{ github.repository }}/releases/latest/download/module.json
-          download: https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/module.zip
+      - name: Rewrite manifest for this release
+        run: node .github/scripts/prepare-manifest.mjs
 
       # Allowlist of runtime files only — no dev files end up in the package.
+      # The listing is compared afterwards because zip merely warns about a
+      # missing file and would ship an incomplete package.
       - name: Create module zip
-        run: zip module.zip module.json main.js style.css templates/active.html templates/library.html LICENSE README.md lang/en.json lang/de.json
+        run: |
+          files=(module.json main.js style.css templates/active.html templates/library.html LICENSE README.md lang/en.json lang/de.json)
+          zip module.zip "${files[@]}"
+          diff <(printf '%s\n' "${files[@]}") <(unzip -Z1 module.zip)
+
+      # Check the package exactly as it ships: unpack it, validate the manifest
+      # and the files it references, and make sure the manifest inside the zip
+      # is the same one that gets attached to the release.
+      - name: Verify package
+        run: |
+          unzip -q module.zip -d "$RUNNER_TEMP/package"
+          node .github/scripts/check-manifest.mjs "$RUNNER_TEMP/package"
+          cmp module.json "$RUNNER_TEMP/package/module.json"
 
       # Release notes = this version's CHANGELOG.md section (everything between
       # "## [<version>]" and the next "## " heading). No section -> fail here,
-      # BEFORE the release exists, so re-tagging after adding it is harmless.
+      # BEFORE the release exists.
       - name: Extract release notes from CHANGELOG.md
-        run: |
-          awk -v ver="${{ steps.version.outputs.version }}" '
-            index($0, "## [" ver "]") == 1 { found = 1; next }
-            found && /^## /                { exit }
-            found                          { print }
-          ' CHANGELOG.md > release-notes.md
-          if ! grep -q '[^[:space:]]' release-notes.md; then
-            echo "::error::CHANGELOG.md has no section for version ${{ steps.version.outputs.version }} — add '## [${{ steps.version.outputs.version }}]' and re-push the tag."
-            exit 1
-          fi
+        run: bash .github/scripts/release-notes.sh "$VERSION" > release-notes.md
+
+      - name: Hand the release files to the release job
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-assets
+          path: |
+            module.json
+            module.zip
+            release-notes.md
+          if-no-files-found: error
+          retention-days: 7
+
+  # Publishes only for a pushed version tag — never on a manual (dry) run.
+  release:
+    needs: build
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-assets
 
       - name: Create release and attach assets
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           body_path: release-notes.md
+          fail_on_unmatched_files: true
           files: |
             module.json
             module.zip
